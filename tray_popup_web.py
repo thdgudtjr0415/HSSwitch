@@ -1,0 +1,431 @@
+"""
+트레이 아이콘 클릭 시 뜨는 팝업을 pywebview로 렌더링.
+클릭할 때마다 새 창을 만들고, 닫힐 때 완전히 폐기한다.
+"""
+
+import ctypes
+
+import webview
+
+import audio_devices
+import config_manager
+import theme_manager
+import volume_control
+
+ICONS = {
+    "headset": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+        'stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M4 13v-1a8 8 0 0 1 16 0v1"/>'
+        '<rect x="2.5" y="13" width="5" height="7" rx="2"/>'
+        '<rect x="16.5" y="13" width="5" height="7" rx="2"/></svg>'
+    ),
+    "speaker": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+        'stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 8.5a5 5 0 0 1 0 7"/></svg>'
+    ),
+    "speaker_muted": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+        'stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M4 9v6h4l5 4V5L8 9H4z"/><line x1="16" y1="9" x2="21" y2="14"/>'
+        '<line x1="21" y1="9" x2="16" y2="14"/></svg>'
+    ),
+    "mic": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+        'stroke-linecap="round" stroke-linejoin="round">'
+        '<rect x="9" y="2" width="6" height="12" rx="3"/>'
+        '<path d="M5 11a7 7 0 0 0 14 0"/>'
+        '<line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>'
+    ),
+    "plus": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+        'stroke-linecap="round">'
+        '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+    ),
+    "check": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+        'stroke-linecap="round" stroke-linejoin="round">'
+        '<polyline points="4 12 9 17 20 6"/></svg>'
+    ),
+    "default": (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">'
+        '<circle cx="12" cy="12" r="8"/></svg>'
+    ),
+}
+
+
+def _esc(s):
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+class Api:
+    """JS(pywebview.api.*)에서 호출하는 파이썬 쪽 진입점. 실제 처리는 tkinter 메인 스레드로 위임."""
+
+    def __init__(self, app, holder):
+        self.app = app
+        self.holder = holder  # {"window": <이 팝업 전용 webview.Window 인스턴스>}
+
+    def switch_playback(self, device_id):
+        self.app.root.after(0, lambda: self.app.switch_device(playback_id=device_id, recording_id=None))
+        self._close()
+
+    def switch_recording(self, device_id):
+        self.app.root.after(0, lambda: self.app.switch_device(playback_id=None, recording_id=device_id))
+        self._close()
+
+    def apply_profile(self, idx):
+        self.app.root.after(0, lambda: self.app.apply_profile_by_index(int(idx)))
+        self._close()
+
+    def add_profile(self):
+        self._close()
+        self.app.root.after(0, self.app._on_add_profile)
+
+    def set_volume(self, device_id, percent):
+        volume_control.set_volume_percent(device_id, int(float(percent)))
+
+    def toggle_mute(self, device_id):
+        return volume_control.toggle_mute(device_id)
+
+    def close(self):
+        self._close()
+
+    def _close(self):
+        window = self.holder.get("window")
+        if window is not None:
+            try:
+                window.destroy()
+            except Exception:
+                pass
+            self.holder["window"] = None
+
+
+def _device_rows_html(devices, default_id, kind):
+    rows = ""
+    for i, d in enumerate(devices):
+        name = _esc(config_manager.get_display_name(d.id, d.name))
+        active = d.id == default_id
+        if kind == "playback":
+            icon_kind = "headset" if ("헤드" in d.name or "head" in d.name.lower()) else "speaker"
+            call = f"pywebview.api.switch_playback('{d.id}')"
+        else:
+            icon_kind = "mic"
+            call = f"pywebview.api.switch_recording('{d.id}')"
+        check = f'<span class="check">{ICONS["check"]}</span>' if active else ""
+        border_cls = "" if i == 0 else "border-top"
+        rows += f'''
+        <div class="row {border_cls}" onclick="{call}">
+          <span class="row-icon">{ICONS[icon_kind]}</span>
+          <span class="row-label">{name}</span>
+          {check}
+        </div>'''
+    return rows
+
+
+def _volume_slider_html(device_id, key):
+    if not device_id:
+        return ""
+    current = volume_control.get_volume_percent(device_id)
+    is_muted = volume_control.get_mute(device_id)
+    bubble_id = f"vol_bubble_{key}"
+    icon_id = f"vol_icon_{key}"
+    muted_cls = "muted" if is_muted else ""
+    return f'''
+    <div class="volume-row">
+      <span class="vol-icon-btn {muted_cls}" id="{icon_id}" onclick="hswToggleMute('{device_id}', '{key}')">
+        <span class="icon-on">{ICONS["speaker"]}</span>
+        <span class="icon-off">{ICONS["speaker_muted"]}</span>
+      </span>
+      <div class="slider-wrap">
+        <input type="range" min="0" max="100" value="{current}" class="slider"
+               oninput="hswVolInput(this, '{device_id}', '{bubble_id}')"
+               onmouseup="hswVolEnd('{bubble_id}')" ontouchend="hswVolEnd('{bubble_id}')">
+        <span class="vol-bubble" id="{bubble_id}">{current}</span>
+      </div>
+    </div>'''
+
+
+def _build_html(app) -> str:
+    resolved = theme_manager.resolve_theme()
+    p = theme_manager.get_palette(resolved)
+    profiles = config_manager.load_profiles()
+    default_playback = audio_devices.get_default_playback_id()
+    default_recording = audio_devices.get_default_recording_id()
+
+    profile_tiles = ""
+    for idx, prof in enumerate(profiles):
+        icon_kind = prof.get("icon") if prof.get("icon") in ("headset", "speaker", "mic") else "default"
+        profile_tiles += f'''
+        <div class="tile" onclick="pywebview.api.apply_profile({idx})">
+          <span class="tile-icon">{ICONS[icon_kind]}</span>
+          <span class="tile-label">{_esc(prof.get("name", ""))}</span>
+        </div>'''
+    profile_tiles += f'''
+        <div class="tile add" onclick="pywebview.api.add_profile()">
+          <span class="tile-icon">{ICONS["plus"]}</span>
+          <span class="tile-label">추가</span>
+        </div>'''
+
+    empty_note = (
+        "" if profiles else '<div class="empty-note">저장된 프로필이 없어요. 눌러서 추가해보세요.</div>'
+    )
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  * {{ box-sizing: border-box; }}
+  html, body {{ margin: 0; height: 100%; background: {p['popup_bg']}; overflow: hidden; }}
+  body {{
+    font-family: -apple-system, 'Segoe UI', 'Helvetica Neue', sans-serif;
+    user-select: none; -webkit-user-select: none;
+    padding: 16px; color: {p['fg']};
+  }}
+  .section-label {{
+    font-size: 11px; font-weight: 600; color: {p['fg_muted']};
+    letter-spacing: 0.3px; margin: 14px 0 8px;
+  }}
+  .section-label:first-child {{ margin-top: 0; }}
+  .grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }}
+  .tile {{
+    background: {p['card_bg']}; border-radius: 16px; height: 76px; display: flex;
+    flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    cursor: pointer; transition: background 0.1s;
+  }}
+  .tile:hover {{ background: {p['card_hover']}; }}
+  .tile.add {{ color: {p['fg_muted']}; }}
+  .tile-icon svg {{ width: 20px; height: 20px; color: {p['fg']}; display: block; }}
+  .tile.add .tile-icon svg {{ color: {p['fg_muted']}; }}
+  .tile-label {{ font-size: 10.5px; }}
+  .empty-note {{ font-size: 11px; color: {p['fg_muted']}; margin-top: 6px; }}
+  .card {{ background: {p['card_bg']}; border-radius: 14px; overflow: hidden; }}
+  .row {{ display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; }}
+  .row.border-top {{ border-top: 0.5px solid {p['divider']}; }}
+  .row:hover {{ background: {p['card_hover']}; }}
+  .row-icon svg {{ width: 16px; height: 16px; color: {p['fg']}; display: block; }}
+  .row-label {{ font-size: 13px; flex: 1; }}
+  .check svg {{ width: 15px; height: 15px; color: {p['accent']}; display: block; }}
+  .volume-row {{ display: flex; align-items: center; gap: 10px; padding: 8px 2px 4px; }}
+  .vol-icon-btn {{ position: relative; width: 18px; height: 18px; cursor: pointer; flex-shrink: 0; }}
+  .vol-icon-btn svg {{ width: 15px; height: 15px; color: {p['fg_muted']}; display: block; }}
+  .vol-icon-btn .icon-off {{ display: none; }}
+  .vol-icon-btn.muted .icon-on {{ display: none; }}
+  .vol-icon-btn.muted .icon-off {{ display: block; }}
+  .vol-icon-btn.muted svg {{ color: {p['accent']}; }}
+  .slider-wrap {{ position: relative; flex: 1; display: flex; align-items: center; }}
+  .slider {{
+    width: 100%; -webkit-appearance: none; height: 4px; border-radius: 2px;
+    background: {p['slider_track']}; outline: none;
+  }}
+  .slider::-webkit-slider-thumb {{
+    -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+    background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.3); cursor: pointer;
+  }}
+  .vol-bubble {{
+    position: absolute; top: -22px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; font-weight: 500; background: {p['accent']}; color: {p['fg_on_accent']};
+    padding: 1px 7px; border-radius: 8px; opacity: 0; transition: opacity 0.15s;
+    pointer-events: none; white-space: nowrap;
+  }}
+</style></head>
+<body>
+  <div class="section-label">프로필</div>
+  <div class="grid">{profile_tiles}</div>
+  {empty_note}
+
+  <div class="section-label">재생 장치</div>
+  <div class="card">{_device_rows_html(app.playback_devices, default_playback, "playback")}</div>
+  {_volume_slider_html(default_playback, "playback")}
+
+  <div class="section-label">녹음 장치</div>
+  <div class="card">{_device_rows_html(app.recording_devices, default_recording, "recording")}</div>
+  {_volume_slider_html(default_recording, "recording")}
+
+  <script>
+    var hswClosed = false;
+    window.addEventListener('blur', function() {{
+      if (hswClosed) return;
+      hswClosed = true;
+      pywebview.api.close();
+    }});
+
+    function hswVolInput(el, deviceId, bubbleId) {{
+      pywebview.api.set_volume(deviceId, el.value);
+      var bubble = document.getElementById(bubbleId);
+      if (!bubble) return;
+      bubble.textContent = el.value;
+      bubble.style.opacity = '1';
+      var pct = (el.value - el.min) / (el.max - el.min);
+      var offset = pct * (el.offsetWidth - 16) + 8;
+      bubble.style.left = offset + 'px';
+    }}
+
+    function hswVolEnd(bubbleId) {{
+      var bubble = document.getElementById(bubbleId);
+      if (!bubble) return;
+      setTimeout(function() {{ bubble.style.opacity = '0'; }}, 500);
+    }}
+
+    function hswToggleMute(deviceId, key) {{
+      pywebview.api.toggle_mute(deviceId).then(function(isMuted) {{
+        var el = document.getElementById('vol_icon_' + key);
+        if (!el) return;
+        if (isMuted) {{ el.classList.add('muted'); }} else {{ el.classList.remove('muted'); }}
+      }});
+    }}
+
+    var hswIdleTimer = null;
+    function hswResetIdleTimer() {{
+      if (hswIdleTimer) clearTimeout(hswIdleTimer);
+      hswIdleTimer = setTimeout(function() {{
+        if (hswClosed) return;
+        hswClosed = true;
+        pywebview.api.close();
+      }}, 4500);
+    }}
+    ['mousemove', 'mousedown', 'keydown', 'input', 'wheel'].forEach(function(evt) {{
+      window.addEventListener(evt, hswResetIdleTimer);
+    }});
+    hswResetIdleTimer();
+  </script>
+</body></html>"""
+
+
+def _compute_geometry(app):
+    n_profiles = len(config_manager.load_profiles()) + 1
+    n_rows = len(app.playback_devices) + len(app.recording_devices)
+    height = 150 + ((n_profiles - 1) // 3 + 1) * 86 + n_rows * 42 + 110
+    height = min(max(height, 420), 820)
+    width = 332
+
+    screen_w = app.screen_width
+    screen_h = app.screen_height
+    x = screen_w - width - 12
+    y = screen_h - height - 16
+    return width, height, x, y
+
+
+_keepalive_window = None
+_current_popup = {"window": None}
+
+
+def init_window(app):
+    """
+    프로그램 시작 시 한 번만 호출 (진짜 메인 스레드에서). pywebview 이벤트 루프를
+    계속 살려두기 위한 보이지 않는 keep-alive 창을 만든다. 실제 팝업은
+    show_tray_popup_web()에서 매번 새로 만들고 버린다.
+    """
+    global _keepalive_window
+    _keepalive_window = webview.create_window(
+        "HSSwitch (background)", html="<html></html>", width=1, height=1, hidden=True,
+    )
+
+
+def run_event_loop():
+    """pywebview 이벤트 루프 시작 (블로킹). 반드시 실제 메인 스레드에서 호출해야 한다."""
+    webview.start()
+
+
+# pywebview 팝업 창의 내부 타이틀. 프레임리스라 화면에 보이진 않지만,
+# 메인 tkinter 창(APP_TITLE="HSSwitch")과 같은 문자열을 쓰면 FindWindowW가
+# 숨겨진 메인 창을 잘못 집을 수 있어서 반드시 고유한 값을 써야 한다.
+POPUP_WINDOW_TITLE = "HSSwitchPopup"
+
+# 백그라운드 스레드(트레이 아이콘 클릭 콜백)에서 SetForegroundWindow를 호출하면
+# Windows가 기본적으로 막기 때문에, ALT 키를 살짝 눌렀다 떼는 척해서 우회한다.
+# (포그라운드 잠금을 우회하는 잘 알려진 트릭)
+VK_MENU = 0x12
+KEYEVENTF_KEYUP = 0x0002
+SWP_NOMOVE = 0x0002
+SWP_NOSIZE = 0x0001
+HWND_TOPMOST = -1
+
+
+def _find_popup_hwnd():
+    return ctypes.windll.user32.FindWindowW(None, POPUP_WINDOW_TITLE)
+
+
+def _apply_rounded_corners(width, height):
+    """Windows GDI를 직접 호출해서 창 외곽을 실제로 둥글게 잘라낸다."""
+    try:
+        hwnd = _find_popup_hwnd()
+        if not hwnd:
+            return
+        region = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, 20, 20)
+        ctypes.windll.user32.SetWindowRgn(hwnd, region, True)
+    except Exception:
+        pass
+
+
+def _force_foreground():
+    """
+    다른 always-on-top 창(예: 브라우저 PiP)에 팝업이 가려지거나, 백그라운드
+    스레드에서 만든 창이라 포커스를 못 받는 경우를 방지하기 위해 강제로
+    맨 앞으로 올리고 포커스를 가져온다.
+    """
+    try:
+        hwnd = _find_popup_hwnd()
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        # topmost 재적용 (다른 topmost 창에 밀린 z-order 복구)
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+        user32.BringWindowToTop(hwnd)
+        # 포그라운드 잠금 우회
+        user32.keybd_event(VK_MENU, 0, 0, 0)
+        user32.SetForegroundWindow(hwnd)
+        user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+    except Exception:
+        pass
+
+
+def show_tray_popup_web(app):
+    """트레이 클릭 시 호출. 매번 새 팝업 창을 만들어 보여주고, 닫힐 때 완전히 폐기한다."""
+    old = _current_popup.get("window")
+    if old is not None:
+        try:
+            old.destroy()
+        except Exception:
+            pass
+        _current_popup["window"] = None
+
+    width, height, x, y = _compute_geometry(app)
+    palette = theme_manager.get_palette(theme_manager.resolve_theme())
+    holder = {}
+    api = Api(app, holder)
+
+    window = webview.create_window(
+        POPUP_WINDOW_TITLE,
+        html=_build_html(app),
+        width=width,
+        height=height,
+        x=x,
+        y=y,
+        frameless=True,
+        easy_drag=False,
+        on_top=True,
+        js_api=api,
+        background_color=palette["popup_bg"],
+    )
+    holder["window"] = window
+    _current_popup["window"] = window
+
+    def _on_loaded():
+        _apply_rounded_corners(width, height)
+        _force_foreground()
+
+    window.events.loaded += _on_loaded
+
+
+def shutdown():
+    """프로그램 종료 시 호출. 열려 있는 창들을 정리하고 이벤트 루프를 끝낸다."""
+    popup = _current_popup.get("window")
+    if popup is not None:
+        try:
+            popup.destroy()
+        except Exception:
+            pass
+    if _keepalive_window is not None:
+        try:
+            _keepalive_window.destroy()
+        except Exception:
+            pass

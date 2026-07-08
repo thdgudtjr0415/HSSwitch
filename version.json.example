@@ -1,0 +1,6 @@
+{
+  "version": "1.0.1",
+  "url": "https://raw.githubusercontent.com/<사용자명>/HSSwitch.Releases/master/HSSwitch.exe",
+  "md5": "빌드한 exe의 md5 해시 (선택, 아래 명령으로 계산)",
+  "notes": "- 창 테마를 vista 스타일로 변경\n- 트레이 팝업이 다른 창에 가려지던 문제 수정"
+}
