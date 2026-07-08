@@ -12,7 +12,7 @@ import os
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HSSwitch")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
-_DEFAULT_CONFIG = {"profiles": [], "aliases": {}, "theme": "system"}
+_DEFAULT_CONFIG = {"profiles": [], "aliases": {}, "theme": "system", "auto_update_check": True}
 
 
 def _ensure_dir():
@@ -29,6 +29,7 @@ def load_config() -> dict:
         data.setdefault("profiles", [])
         data.setdefault("aliases", {})
         data.setdefault("theme", "system")
+        data.setdefault("auto_update_check", True)
         return data
     except Exception:
         return dict(_DEFAULT_CONFIG)
@@ -101,4 +102,16 @@ def set_theme(theme: str):
         theme = "system"
     config = load_config()
     config["theme"] = theme
+    save_config(config)
+
+
+# ---------- 자동 업데이트 알림 ----------
+def load_auto_update_check() -> bool:
+    """True면 시작할 때 자동으로 새 버전을 확인해서 알림을 띄운다."""
+    return bool(load_config().get("auto_update_check", True))
+
+
+def set_auto_update_check(enabled: bool):
+    config = load_config()
+    config["auto_update_check"] = bool(enabled)
     save_config(config)

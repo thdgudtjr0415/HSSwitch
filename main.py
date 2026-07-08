@@ -87,8 +87,11 @@ class HSSwitchApp:
         self.tray_icon = None
         self._start_tray_thread()
 
-        # 시작하자마자 확인하면 창 뜨는 타이밍과 겹치니 살짝 늦춰서 백그라운드 확인
-        self.root.after(2000, lambda: self._check_for_update(silent=True))
+        # 시작하자마자 확인하면 창 뜨는 타이밍과 겹치니 살짝 늦춰서 백그라운드 확인.
+        # "자동 업데이트 확인"이 꺼져 있으면 시작할 때는 아예 확인하지 않는다
+        # (설정 탭의 수동 "업데이트 확인" 버튼은 이 설정과 무관하게 항상 동작한다).
+        if config_manager.load_auto_update_check():
+            self.root.after(2000, lambda: self._check_for_update(silent=True))
 
     def switch_device(self, playback_id, recording_id):
         switch_device(playback_id, recording_id)
@@ -141,12 +144,27 @@ class HSSwitchApp:
     # ---------- 업데이트 ----------
     def _build_update_row(self, parent):
         ttk.Label(parent, text="업데이트", font=("", 10, "bold")).pack(anchor="w", padx=10, pady=(20, 6))
+
+        self.auto_update_var = tk.BooleanVar(value=config_manager.load_auto_update_check())
+        ttk.Checkbutton(
+            parent, text="시작할 때 자동으로 업데이트 확인", variable=self.auto_update_var,
+            command=self._on_auto_update_toggle,
+        ).pack(anchor="w", padx=16, pady=2)
+        ttk.Label(
+            parent,
+            text="꺼두면 새 버전이 나와도 알림이 안 떠요. \"업데이트 확인\" 버튼으로는 언제든 직접 확인할 수 있어요.",
+            wraplength=480, foreground="gray",
+        ).pack(anchor="w", padx=16, pady=(0, 6))
+
         row = ttk.Frame(parent)
         row.pack(anchor="w", padx=16, pady=2, fill="x")
         ttk.Label(row, text=f"현재 버전: {APP_VERSION}").pack(side="left")
         ttk.Button(
             row, text="업데이트 확인", command=lambda: self._check_for_update(silent=False)
         ).pack(side="left", padx=(10, 0))
+
+    def _on_auto_update_toggle(self):
+        config_manager.set_auto_update_check(self.auto_update_var.get())
 
     def _check_for_update(self, silent: bool):
         def worker():
