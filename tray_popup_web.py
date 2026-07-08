@@ -416,6 +416,18 @@ def _build_html(app) -> str:
   .ctx-item {{ padding: 8px 14px; font-size: 12px; cursor: pointer; color: {p['fg']}; }}
   .ctx-item:hover {{ background: {p['card_hover']}; }}
   .ctx-item.danger {{ color: #e2534a; }}
+  .confirm-overlay {{
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    display: flex; align-items: center; justify-content: center; z-index: 1100;
+  }}
+  .confirm-box {{ background: {p['card_bg']}; border-radius: 12px; padding: 16px; width: 230px; }}
+  .confirm-msg {{ font-size: 13px; margin-bottom: 14px; text-align: center; color: {p['fg']}; }}
+  .confirm-actions {{ display: flex; gap: 8px; }}
+  .confirm-btn {{
+    flex: 1; border: none; border-radius: 8px; padding: 8px; font-size: 12px; cursor: pointer;
+  }}
+  .confirm-btn.cancel {{ background: {p['card_hover']}; color: {p['fg']}; }}
+  .confirm-btn.danger {{ background: #e2534a; color: white; }}
 </style></head>
 <body>
   <div id="root">{main_view}</div>
@@ -502,8 +514,45 @@ def _build_html(app) -> str:
 
     function hswDeleteProfile(idx) {{
       hswCloseProfileMenu();
-      if (!confirm('이 프로필을 삭제할까요?')) return;
-      pywebview.api.delete_profile(idx).then(function() {{ hswShowMain(); }});
+      hswShowConfirmModal('이 프로필을 삭제할까요?', function() {{
+        pywebview.api.delete_profile(idx).then(function() {{ hswShowMain(); }});
+      }});
+    }}
+
+    function hswShowConfirmModal(message, onConfirm) {{
+      hswCloseConfirmModal();
+      var overlay = document.createElement('div');
+      overlay.id = 'confirm-overlay';
+      overlay.className = 'confirm-overlay';
+      var box = document.createElement('div');
+      box.className = 'confirm-box';
+      var msg = document.createElement('div');
+      msg.className = 'confirm-msg';
+      msg.textContent = message;
+      var actions = document.createElement('div');
+      actions.className = 'confirm-actions';
+      var cancelBtn = document.createElement('button');
+      cancelBtn.className = 'confirm-btn cancel';
+      cancelBtn.textContent = '취소';
+      cancelBtn.onclick = hswCloseConfirmModal;
+      var okBtn = document.createElement('button');
+      okBtn.className = 'confirm-btn danger';
+      okBtn.textContent = '삭제';
+      okBtn.onclick = function() {{
+        hswCloseConfirmModal();
+        onConfirm();
+      }};
+      actions.appendChild(cancelBtn);
+      actions.appendChild(okBtn);
+      box.appendChild(msg);
+      box.appendChild(actions);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+    }}
+
+    function hswCloseConfirmModal() {{
+      var overlay = document.getElementById('confirm-overlay');
+      if (overlay) overlay.remove();
     }}
 
     var hswClosed = false;
