@@ -120,16 +120,32 @@ def _download_and_apply(app, manifest: dict):
     pid = os.getpid()
     batch_path = os.path.join(tempfile.gettempdir(), "hsswitch_update.bat")
     # 현재 프로세스(pid)가 완전히 죽을 때까지 기다렸다가 exe를 교체하고 재실행한다.
+    # 무한 대기를 방지하기 위해 최대 15초(WAIT_LIMIT회)만 기다리고,
+    # 그래도 안 죽어있으면 강제 종료 후 진행한다. (좀비 프로세스가 파일을
+    # 잠그고 있으면 교체가 계속 실패하거나, 절반만 교체된 채로 새 인스턴스가
+    # 실행돼서 "Failed to load Python DLL" 같은 오류가 나는 걸 방지)
     batch_content = f"""@echo off
-setlocal
+setlocal enabledelayedexpansion
+set count=0
 :wait
 tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
 if not errorlevel 1 (
+  set /a count+=1
+  if !count! geq 15 (
+    taskkill /F /PID {pid} >nul 2>nul
+    timeout /t 1 /nobreak >nul
+    goto after_wait
+  )
   timeout /t 1 /nobreak >nul
   goto wait
 )
+:after_wait
 move /y "{new_exe_path}" "{current_exe}" >nul
+if not exist "{current_exe}" (
+  goto end
+)
 start "" "{current_exe}"
+:end
 del "%~f0"
 """
     with open(batch_path, "w", encoding="utf-8") as f:
