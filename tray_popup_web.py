@@ -54,6 +54,8 @@ ICONS = {
     ),
 }
 
+PROFILE_ICON_KEYS = ("default", "headset", "speaker", "mic")
+
 
 def _esc(s):
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
@@ -78,9 +80,51 @@ class Api:
         self.app.root.after(0, lambda: self.app.apply_profile_by_index(int(idx)))
         self._close()
 
-    def add_profile(self):
-        self._close()
-        self.app.root.after(0, self.app._on_add_profile)
+    def get_main_view(self):
+        """프로필 추가 폼에서 '뒤로'/저장 완료 시 메인 화면 HTML을 다시 만들어 돌려준다.
+        프로필 개수가 바뀌었을 수 있으니 창 크기/위치도 다시 계산해서 맞춘다."""
+        html = _build_main_view_html(self.app)
+        window = self.holder.get("window")
+        if window is not None:
+            try:
+                width, height, x, y = _compute_geometry(self.app)
+                window.resize(width, height)
+                window.move(x, y)
+            except Exception:
+                pass
+        return html
+
+    def get_add_form(self):
+        """'+ 추가' 타일을 눌렀을 때 지금 쓰고 있는 재생/녹음 장치를 미리 채운 입력 폼 HTML."""
+        return _build_add_profile_view_html(self.app)
+
+    def save_new_profile(self, name, icon, playback_id, recording_id, hotkey):
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "error": "이름을 입력하세요."}
+
+        playback_dev = next((d for d in self.app.playback_devices if d.id == playback_id), None)
+        recording_dev = next((d for d in self.app.recording_devices if d.id == recording_id), None)
+
+        profile = {
+            "name": name,
+            "icon": icon if icon in PROFILE_ICON_KEYS else "default",
+            "playback_id": playback_dev.id if playback_dev else None,
+            "playback_name": config_manager.get_display_name(playback_dev.id, playback_dev.name)
+            if playback_dev else None,
+            "recording_id": recording_dev.id if recording_dev else None,
+            "recording_name": config_manager.get_display_name(recording_dev.id, recording_dev.name)
+            if recording_dev else None,
+            "hotkey": (hotkey or "").strip() or None,
+        }
+        config_manager.add_profile(profile)
+
+        def _refresh():
+            self.app.profiles = config_manager.load_profiles()
+            self.app._register_hotkeys()
+
+        self.app.root.after(0, _refresh)
+        return {"ok": True}
 
     def set_volume(self, device_id, percent):
         volume_control.set_volume_percent(device_id, int(float(percent)))
@@ -146,9 +190,7 @@ def _volume_slider_html(device_id, key):
     </div>'''
 
 
-def _build_html(app) -> str:
-    resolved = theme_manager.resolve_theme()
-    p = theme_manager.get_palette(resolved)
+def _build_main_view_html(app) -> str:
     profiles = config_manager.load_profiles()
     default_playback = audio_devices.get_default_playback_id()
     default_recording = audio_devices.get_default_recording_id()
@@ -162,7 +204,7 @@ def _build_html(app) -> str:
           <span class="tile-label">{_esc(prof.get("name", ""))}</span>
         </div>'''
     profile_tiles += f'''
-        <div class="tile add" onclick="pywebview.api.add_profile()">
+        <div class="tile add" onclick="hswShowAdd()">
           <span class="tile-icon">{ICONS["plus"]}</span>
           <span class="tile-label">추가</span>
         </div>'''
@@ -170,6 +212,80 @@ def _build_html(app) -> str:
     empty_note = (
         "" if profiles else '<div class="empty-note">저장된 프로필이 없어요. 눌러서 추가해보세요.</div>'
     )
+
+    return f'''
+      <div class="section-label">프로필</div>
+      <div class="grid">{profile_tiles}</div>
+      {empty_note}
+
+      <div class="section-label">재생 장치</div>
+      <div class="card">{_device_rows_html(app.playback_devices, default_playback, "playback")}</div>
+      {_volume_slider_html(default_playback, "playback")}
+
+      <div class="section-label">녹음 장치</div>
+      <div class="card">{_device_rows_html(app.recording_devices, default_recording, "recording")}</div>
+      {_volume_slider_html(default_recording, "recording")}
+    '''
+
+
+def _build_add_profile_view_html(app) -> str:
+    """'+ 추가' 타일을 눌렀을 때 보여줄 입력 폼. 지금 실제로 쓰고 있는 재생/녹음 장치를
+    미리 선택해둬서, 이름만 입력하고 저장하면 바로 프로필이 만들어지도록 한다."""
+    default_playback = audio_devices.get_default_playback_id()
+    default_recording = audio_devices.get_default_recording_id()
+
+    playback_options = ""
+    for d in app.playback_devices:
+        label = _esc(config_manager.get_display_name(d.id, d.name))
+        selected = "selected" if d.id == default_playback else ""
+        playback_options += f'<option value="{d.id}" {selected}>{label}</option>'
+
+    recording_options = ""
+    for d in app.recording_devices:
+        label = _esc(config_manager.get_display_name(d.id, d.name))
+        selected = "selected" if d.id == default_recording else ""
+        recording_options += f'<option value="{d.id}" {selected}>{label}</option>'
+
+    playback_hint = ' <span class="current-hint">· 현재 사용 중</span>' if default_playback else ""
+    recording_hint = ' <span class="current-hint">· 현재 사용 중</span>' if default_recording else ""
+    icon_options = "".join(f'<option value="{k}">{k}</option>' for k in PROFILE_ICON_KEYS)
+
+    return f'''
+      <div class="form-header">
+        <span class="back-btn" onclick="hswShowMain()">‹ 뒤로</span>
+        <span class="form-title">프로필 추가</span>
+      </div>
+      <div class="field">
+        <div class="field-label">이름</div>
+        <input type="text" id="add-name" class="text-input" placeholder="예: 게임할 때">
+      </div>
+      <div class="field">
+        <div class="field-label">아이콘</div>
+        <select id="add-icon" class="select-input">{icon_options}</select>
+      </div>
+      <div class="field">
+        <div class="field-label">재생 장치{playback_hint}</div>
+        <select id="add-playback" class="select-input">{playback_options}</select>
+      </div>
+      <div class="field">
+        <div class="field-label">녹음 장치{recording_hint}</div>
+        <select id="add-recording" class="select-input">{recording_options}</select>
+      </div>
+      <div class="field">
+        <div class="field-label">단축키 (예: ctrl+alt+1, 비워두면 없음)</div>
+        <input type="text" id="add-hotkey" class="text-input" placeholder="">
+      </div>
+      <div class="save-row">
+        <button class="save-btn" onclick="hswSaveProfile()">저장</button>
+      </div>
+      <div class="error-msg" id="add-error"></div>
+    '''
+
+
+def _build_html(app) -> str:
+    resolved = theme_manager.resolve_theme()
+    p = theme_manager.get_palette(resolved)
+    main_view = _build_main_view_html(app)
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
@@ -226,21 +342,61 @@ def _build_html(app) -> str:
     padding: 1px 7px; border-radius: 8px; opacity: 0; transition: opacity 0.15s;
     pointer-events: none; white-space: nowrap;
   }}
+  .form-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }}
+  .back-btn {{ font-size: 12px; color: {p['fg_muted']}; cursor: pointer; }}
+  .back-btn:hover {{ color: {p['fg']}; }}
+  .form-title {{ font-size: 13px; font-weight: 600; }}
+  .field {{ margin-bottom: 12px; }}
+  .field-label {{ font-size: 11px; color: {p['fg_muted']}; margin-bottom: 4px; }}
+  .current-hint {{ color: #3ddc97; font-weight: 600; }}
+  .text-input, .select-input {{
+    width: 100%; box-sizing: border-box; background: {p['card_bg']}; color: {p['fg']};
+    border: none; border-radius: 8px; padding: 8px 10px; font-size: 13px; outline: none;
+  }}
+  .select-input {{ appearance: none; cursor: pointer; }}
+  .save-row {{ margin-top: 16px; }}
+  .save-btn {{
+    width: 100%; background: {p['accent']}; color: {p['fg_on_accent']}; border: none;
+    border-radius: 8px; padding: 9px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }}
+  .save-btn:hover {{ opacity: 0.9; }}
+  .error-msg {{ font-size: 11px; color: #e2534a; margin-top: 8px; min-height: 14px; }}
 </style></head>
 <body>
-  <div class="section-label">프로필</div>
-  <div class="grid">{profile_tiles}</div>
-  {empty_note}
-
-  <div class="section-label">재생 장치</div>
-  <div class="card">{_device_rows_html(app.playback_devices, default_playback, "playback")}</div>
-  {_volume_slider_html(default_playback, "playback")}
-
-  <div class="section-label">녹음 장치</div>
-  <div class="card">{_device_rows_html(app.recording_devices, default_recording, "recording")}</div>
-  {_volume_slider_html(default_recording, "recording")}
+  <div id="root">{main_view}</div>
 
   <script>
+    function hswShowAdd() {{
+      pywebview.api.get_add_form().then(function(html) {{
+        document.getElementById('root').innerHTML = html;
+        var nameInput = document.getElementById('add-name');
+        if (nameInput) nameInput.focus();
+      }});
+    }}
+
+    function hswShowMain() {{
+      pywebview.api.get_main_view().then(function(html) {{
+        document.getElementById('root').innerHTML = html;
+      }});
+    }}
+
+    function hswSaveProfile() {{
+      var name = document.getElementById('add-name').value;
+      var icon = document.getElementById('add-icon').value;
+      var playbackEl = document.getElementById('add-playback');
+      var recordingEl = document.getElementById('add-recording');
+      var hotkey = document.getElementById('add-hotkey').value;
+      var playbackId = playbackEl ? playbackEl.value : null;
+      var recordingId = recordingEl ? recordingEl.value : null;
+      pywebview.api.save_new_profile(name, icon, playbackId, recordingId, hotkey).then(function(res) {{
+        if (!res.ok) {{
+          var err = document.getElementById('add-error');
+          if (err) err.textContent = res.error || '저장하지 못했어요.';
+          return;
+        }}
+        hswShowMain();
+      }});
+    }}
     var hswClosed = false;
     window.addEventListener('blur', function() {{
       if (hswClosed) return;
