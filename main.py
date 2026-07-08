@@ -7,6 +7,7 @@ HSSwitch — 스피커/헤드셋/마이크 빠른 전환 프로그램
 - 전환 시 Console/Multimedia/Communications 세 역할 모두 갱신
 """
 
+import ctypes
 import sys
 import threading
 import tkinter as tk
@@ -27,6 +28,28 @@ from version import APP_VERSION
 
 APP_TITLE = "HSSwitch"
 PROFILE_ICONS = ["headset", "speaker", "mic", "default"]
+
+_SINGLE_INSTANCE_MUTEX_NAME = "Global\\HSSwitchSingleInstanceMutex"
+_instance_mutex_handle = None  # GC/프로세스 종료 전까지 살려둬야 뮤텍스가 유지됨
+
+
+def _ensure_single_instance() -> bool:
+    """
+    이미 실행 중인 인스턴스가 있으면 그 창을 앞으로 가져오고 False를 반환한다.
+    (exe 사본을 여러 개 실행하거나, 업데이트 재실행 타이밍이 겹칠 때 트레이 아이콘이
+    여러 개 뜨는 걸 방지)
+    """
+    global _instance_mutex_handle
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _SINGLE_INSTANCE_MUTEX_NAME)
+    already_running = ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+    if already_running:
+        hwnd = ctypes.windll.user32.FindWindowW(None, APP_TITLE)
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+        return False
+    _instance_mutex_handle = mutex
+    return True
 
 
 def switch_device(playback_id: str | None, recording_id: str | None):
@@ -492,6 +515,9 @@ class HSSwitchApp:
 
 
 def main():
+    if not _ensure_single_instance():
+        return
+
     ready = threading.Event()
     holder = {}
 
