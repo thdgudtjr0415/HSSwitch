@@ -22,10 +22,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/4] Building app folder with PyInstaller (onedir)...
-rem --onefile를 쓰지 않는다: 실행할 때마다 임시 폴더에 압축을 풀었다가 지우는
-rem 방식이 백신 실시간 검사와 자꾸 충돌해서 "Failed to load Python DLL" 류의
-rem 오류가 반복됐다. onedir는 압축 해제 과정 자체가 없어서 이 문제가 구조적으로 없어진다.
+echo [3/4] Building app folder with PyInstaller (onedir mode, not onefile)...
 pyinstaller --windowed --icon=assets\icon.ico --name HSSwitch main.py
 if errorlevel 1 (
     echo.

@@ -150,14 +150,18 @@ if not errorlevel 1 (
 )
 :after_wait
 robocopy "{extract_dir}" "{install_dir}" /E /IS /IT /R:3 /W:1 /NFL /NDL /NJH /NJS >nul
-rem 교체 직후 곧바로 실행하면, 방금 새로 생긴 파일들을 백신이 실시간 검사하느라
-rem 잠깐 잡고 있는 경우와 겹칠 수 있어서 검사가 끝날 시간을 조금 벌어준다.
+rem Wait a moment before relaunching: launching immediately after replacing
+rem files can race with real-time antivirus scanning of the fresh files.
 timeout /t 3 /nobreak >nul
 start "" "{current_exe}"
 rmdir /s /q "{work_dir}" >nul 2>nul
 del "%~f0"
 """
-    with open(batch_path, "w", encoding="utf-8") as f:
+    # .bat 파일은 cmd.exe가 시스템 ANSI 코드페이지로 해석하므로, UTF-8로 쓰면
+    # (특히 한글 사용자 폴더 경로가 포함될 때) 깨진 바이트가 명령어로 잘못
+    # 실행될 수 있다. "mbcs"는 Windows의 활성 ANSI 코드페이지를 그대로 써서
+    # cmd.exe가 기대하는 인코딩과 일치시킨다.
+    with open(batch_path, "w", encoding="mbcs") as f:
         f.write(batch_content)
 
     subprocess.Popen(
