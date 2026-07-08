@@ -96,17 +96,41 @@ class Api:
 
     def get_add_form(self):
         """'+ 추가' 타일을 눌렀을 때 지금 쓰고 있는 재생/녹음 장치를 미리 채운 입력 폼 HTML."""
-        return _build_add_profile_view_html(self.app)
+        return _build_profile_form_html(self.app)
+
+    def get_edit_form(self, idx):
+        """프로필 우클릭 -> 수정을 눌렀을 때, 그 프로필의 저장된 값을 채운 입력 폼 HTML."""
+        return _build_profile_form_html(self.app, edit_index=int(idx))
 
     def save_new_profile(self, name, icon, playback_id, recording_id, hotkey):
         name = (name or "").strip()
         if not name:
             return {"ok": False, "error": "이름을 입력하세요."}
 
+        profile = self._build_profile_dict(name, icon, playback_id, recording_id, hotkey)
+        config_manager.add_profile(profile)
+        self._refresh_app()
+        return {"ok": True}
+
+    def update_profile(self, idx, name, icon, playback_id, recording_id, hotkey):
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "error": "이름을 입력하세요."}
+
+        profile = self._build_profile_dict(name, icon, playback_id, recording_id, hotkey)
+        config_manager.update_profile(int(idx), profile)
+        self._refresh_app()
+        return {"ok": True}
+
+    def delete_profile(self, idx):
+        config_manager.delete_profile(int(idx))
+        self._refresh_app()
+        return {"ok": True}
+
+    def _build_profile_dict(self, name, icon, playback_id, recording_id, hotkey):
         playback_dev = next((d for d in self.app.playback_devices if d.id == playback_id), None)
         recording_dev = next((d for d in self.app.recording_devices if d.id == recording_id), None)
-
-        profile = {
+        return {
             "name": name,
             "icon": icon if icon in PROFILE_ICON_KEYS else "default",
             "playback_id": playback_dev.id if playback_dev else None,
@@ -117,14 +141,13 @@ class Api:
             if recording_dev else None,
             "hotkey": (hotkey or "").strip() or None,
         }
-        config_manager.add_profile(profile)
 
+    def _refresh_app(self):
         def _refresh():
             self.app.profiles = config_manager.load_profiles()
             self.app._register_hotkeys()
 
         self.app.root.after(0, _refresh)
-        return {"ok": True}
 
     def set_volume(self, device_id, percent):
         volume_control.set_volume_percent(device_id, int(float(percent)))
@@ -199,7 +222,8 @@ def _build_main_view_html(app) -> str:
     for idx, prof in enumerate(profiles):
         icon_kind = prof.get("icon") if prof.get("icon") in ("headset", "speaker", "mic") else "default"
         profile_tiles += f'''
-        <div class="tile" onclick="pywebview.api.apply_profile({idx})">
+        <div class="tile" onclick="pywebview.api.apply_profile({idx})"
+             oncontextmenu="hswOnProfileContextMenu(event, {idx})">
           <span class="tile-icon">{ICONS[icon_kind]}</span>
           <span class="tile-label">{_esc(prof.get("name", ""))}</span>
         </div>'''
@@ -228,36 +252,60 @@ def _build_main_view_html(app) -> str:
     '''
 
 
-def _build_add_profile_view_html(app) -> str:
-    """'+ 추가' 타일을 눌렀을 때 보여줄 입력 폼. 지금 실제로 쓰고 있는 재생/녹음 장치를
-    미리 선택해둬서, 이름만 입력하고 저장하면 바로 프로필이 만들어지도록 한다."""
+def _build_profile_form_html(app, edit_index: int | None = None) -> str:
+    """'+ 추가' 또는 프로필 우클릭 -> 수정을 눌렀을 때 보여줄 입력 폼.
+    추가 모드에서는 지금 실제로 쓰고 있는 재생/녹음 장치를 미리 선택해두고,
+    수정 모드에서는 그 프로필에 저장돼 있던 값을 채운다."""
+    profiles = config_manager.load_profiles()
+    existing = (
+        profiles[edit_index] if edit_index is not None and 0 <= edit_index < len(profiles) else None
+    )
+
     default_playback = audio_devices.get_default_playback_id()
     default_recording = audio_devices.get_default_recording_id()
+    selected_playback_id = existing.get("playback_id") if existing else default_playback
+    selected_recording_id = existing.get("recording_id") if existing else default_recording
 
     playback_options = ""
     for d in app.playback_devices:
         label = _esc(config_manager.get_display_name(d.id, d.name))
-        selected = "selected" if d.id == default_playback else ""
+        selected = "selected" if d.id == selected_playback_id else ""
         playback_options += f'<option value="{d.id}" {selected}>{label}</option>'
 
     recording_options = ""
     for d in app.recording_devices:
         label = _esc(config_manager.get_display_name(d.id, d.name))
-        selected = "selected" if d.id == default_recording else ""
+        selected = "selected" if d.id == selected_recording_id else ""
         recording_options += f'<option value="{d.id}" {selected}>{label}</option>'
 
-    playback_hint = ' <span class="current-hint">· 현재 사용 중</span>' if default_playback else ""
-    recording_hint = ' <span class="current-hint">· 현재 사용 중</span>' if default_recording else ""
-    icon_options = "".join(f'<option value="{k}">{k}</option>' for k in PROFILE_ICON_KEYS)
+    playback_hint = (
+        ' <span class="current-hint">· 현재 사용 중</span>'
+        if selected_playback_id and selected_playback_id == default_playback else ""
+    )
+    recording_hint = (
+        ' <span class="current-hint">· 현재 사용 중</span>'
+        if selected_recording_id and selected_recording_id == default_recording else ""
+    )
+    existing_icon = existing.get("icon", "default") if existing else "default"
+    icon_options = "".join(
+        f'<option value="{k}" {"selected" if existing_icon == k else ""}>{k}</option>'
+        for k in PROFILE_ICON_KEYS
+    )
+
+    title = "프로필 수정" if existing is not None else "프로필 추가"
+    name_value = _esc(existing.get("name", "")) if existing else ""
+    hotkey_value = _esc(existing.get("hotkey") or "") if existing else ""
+    edit_index_value = edit_index if existing is not None else ""
 
     return f'''
       <div class="form-header">
         <span class="back-btn" onclick="hswShowMain()">‹ 뒤로</span>
-        <span class="form-title">프로필 추가</span>
+        <span class="form-title">{title}</span>
       </div>
+      <input type="hidden" id="add-edit-index" value="{edit_index_value}">
       <div class="field">
         <div class="field-label">이름</div>
-        <input type="text" id="add-name" class="text-input" placeholder="예: 게임할 때">
+        <input type="text" id="add-name" class="text-input" placeholder="예: 게임할 때" value="{name_value}">
       </div>
       <div class="field">
         <div class="field-label">아이콘</div>
@@ -273,7 +321,7 @@ def _build_add_profile_view_html(app) -> str:
       </div>
       <div class="field">
         <div class="field-label">단축키 (예: ctrl+alt+1, 비워두면 없음)</div>
-        <input type="text" id="add-hotkey" class="text-input" placeholder="">
+        <input type="text" id="add-hotkey" class="text-input" placeholder="" value="{hotkey_value}">
       </div>
       <div class="save-row">
         <button class="save-btn" onclick="hswSaveProfile()">저장</button>
@@ -361,6 +409,13 @@ def _build_html(app) -> str:
   }}
   .save-btn:hover {{ opacity: 0.9; }}
   .error-msg {{ font-size: 11px; color: #e2534a; margin-top: 8px; min-height: 14px; }}
+  .ctx-menu {{
+    position: fixed; background: {p['card_bg']}; border-radius: 8px; overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35); z-index: 1000; min-width: 96px;
+  }}
+  .ctx-item {{ padding: 8px 14px; font-size: 12px; cursor: pointer; color: {p['fg']}; }}
+  .ctx-item:hover {{ background: {p['card_hover']}; }}
+  .ctx-item.danger {{ color: #e2534a; }}
 </style></head>
 <body>
   <div id="root">{main_view}</div>
@@ -388,7 +443,12 @@ def _build_html(app) -> str:
       var hotkey = document.getElementById('add-hotkey').value;
       var playbackId = playbackEl ? playbackEl.value : null;
       var recordingId = recordingEl ? recordingEl.value : null;
-      pywebview.api.save_new_profile(name, icon, playbackId, recordingId, hotkey).then(function(res) {{
+      var editIdxEl = document.getElementById('add-edit-index');
+      var editIdx = editIdxEl && editIdxEl.value !== '' ? editIdxEl.value : null;
+      var call = editIdx !== null
+        ? pywebview.api.update_profile(editIdx, name, icon, playbackId, recordingId, hotkey)
+        : pywebview.api.save_new_profile(name, icon, playbackId, recordingId, hotkey);
+      call.then(function(res) {{
         if (!res.ok) {{
           var err = document.getElementById('add-error');
           if (err) err.textContent = res.error || '저장하지 못했어요.';
@@ -397,6 +457,55 @@ def _build_html(app) -> str:
         hswShowMain();
       }});
     }}
+
+    function hswOnProfileContextMenu(e, idx) {{
+      e.preventDefault();
+      hswShowProfileMenu(e.clientX, e.clientY, idx);
+    }}
+
+    function hswShowProfileMenu(x, y, idx) {{
+      hswCloseProfileMenu();
+      var menu = document.createElement('div');
+      menu.id = 'profile-ctx-menu';
+      menu.className = 'ctx-menu';
+      menu.style.left = x + 'px';
+      menu.style.top = y + 'px';
+      var editItem = document.createElement('div');
+      editItem.className = 'ctx-item';
+      editItem.textContent = '수정';
+      editItem.onclick = function() {{ hswEditProfile(idx); }};
+      var deleteItem = document.createElement('div');
+      deleteItem.className = 'ctx-item danger';
+      deleteItem.textContent = '삭제';
+      deleteItem.onclick = function() {{ hswDeleteProfile(idx); }};
+      menu.appendChild(editItem);
+      menu.appendChild(deleteItem);
+      document.body.appendChild(menu);
+      setTimeout(function() {{
+        document.addEventListener('click', hswCloseProfileMenu, {{ once: true }});
+      }}, 0);
+    }}
+
+    function hswCloseProfileMenu() {{
+      var menu = document.getElementById('profile-ctx-menu');
+      if (menu) menu.remove();
+    }}
+
+    function hswEditProfile(idx) {{
+      hswCloseProfileMenu();
+      pywebview.api.get_edit_form(idx).then(function(html) {{
+        document.getElementById('root').innerHTML = html;
+        var nameInput = document.getElementById('add-name');
+        if (nameInput) nameInput.focus();
+      }});
+    }}
+
+    function hswDeleteProfile(idx) {{
+      hswCloseProfileMenu();
+      if (!confirm('이 프로필을 삭제할까요?')) return;
+      pywebview.api.delete_profile(idx).then(function() {{ hswShowMain(); }});
+    }}
+
     var hswClosed = false;
     window.addEventListener('blur', function() {{
       if (hswClosed) return;
