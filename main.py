@@ -246,6 +246,9 @@ class HSSwitchApp:
         ttk.Button(btn_row, text="추가", command=self._on_add_profile).pack(side="left", padx=6)
         ttk.Button(btn_row, text="수정", command=self._on_edit_profile).pack(side="left")
         ttk.Button(btn_row, text="삭제", command=self._on_delete_profile).pack(side="left", padx=6)
+        ttk.Button(
+            btn_row, text="현재 장치로 빠른 추가", command=self._on_quick_add_profile
+        ).pack(side="left", padx=(12, 0))
 
         self._refresh_profile_tree()
 
@@ -362,6 +365,16 @@ class HSSwitchApp:
     def _on_add_profile(self):
         self._open_profile_editor()
 
+    def _on_quick_add_profile(self):
+        """지금 실제로 쓰고 있는 재생/녹음 장치를 그대로 채운 채로 추가 창을 연다.
+        드롭다운에서 장치를 직접 고를 필요 없이 이름만 입력하면 끝."""
+        current_playback_id = audio_devices.get_default_playback_id()
+        current_recording_id = audio_devices.get_default_recording_id()
+        self._open_profile_editor(
+            prefill_playback_id=current_playback_id,
+            prefill_recording_id=current_recording_id,
+        )
+
     def _on_edit_profile(self):
         idx = self._selected_profile_index()
         if idx is None:
@@ -379,7 +392,12 @@ class HSSwitchApp:
             self._refresh_profile_tree()
             self._register_hotkeys()
 
-    def _open_profile_editor(self, edit_index: int | None = None):
+    def _open_profile_editor(
+        self,
+        edit_index: int | None = None,
+        prefill_playback_id: str | None = None,
+        prefill_recording_id: str | None = None,
+    ):
         self.show_from_tray()
 
         editor = tk.Toplevel(self.root)
@@ -390,9 +408,14 @@ class HSSwitchApp:
 
         existing = self.profiles[edit_index] if edit_index is not None else {}
 
-        ttk.Label(editor, text="이름").pack(anchor="w", padx=12, pady=(12, 0))
+        name_entry_row = ttk.Label(editor, text="이름")
+        name_entry_row.pack(anchor="w", padx=12, pady=(12, 0))
         name_var = tk.StringVar(value=existing.get("name", ""))
-        ttk.Entry(editor, textvariable=name_var).pack(fill="x", padx=12)
+        name_entry = ttk.Entry(editor, textvariable=name_var)
+        name_entry.pack(fill="x", padx=12)
+        if prefill_playback_id or prefill_recording_id:
+            # 빠른 추가: 이름만 바로 입력할 수 있도록 포커스를 준다.
+            editor.after(50, lambda: (name_entry.focus_set(), name_entry.select_range(0, "end")))
 
         ttk.Label(editor, text="아이콘").pack(anchor="w", padx=12, pady=(12, 0))
         icon_var = tk.StringVar(value=existing.get("icon", "default"))
@@ -401,26 +424,42 @@ class HSSwitchApp:
         )
         icon_combo.pack(fill="x", padx=12)
 
-        ttk.Label(editor, text="재생 장치").pack(anchor="w", padx=12, pady=(12, 0))
+        playback_label_row = ttk.Frame(editor)
+        playback_label_row.pack(fill="x", padx=12, pady=(12, 0))
+        ttk.Label(playback_label_row, text="재생 장치").pack(side="left")
         playback_combo = ttk.Combobox(editor, state="readonly")
         playback_combo["values"] = [
             config_manager.get_display_name(d.id, d.name) for d in self.playback_devices
         ]
         playback_combo.pack(fill="x", padx=12)
+        playback_idx_by_id = {d.id: i for i, d in enumerate(self.playback_devices)}
         existing_playback = existing.get("playback_name")
-        if existing_playback in playback_combo["values"]:
+        if prefill_playback_id and prefill_playback_id in playback_idx_by_id:
+            playback_combo.current(playback_idx_by_id[prefill_playback_id])
+            ttk.Label(
+                playback_label_row, text=" · 현재 사용 중", foreground="#0f6e56"
+            ).pack(side="left")
+        elif existing_playback in playback_combo["values"]:
             playback_combo.set(existing_playback)
         elif self.playback_devices:
             playback_combo.current(0)
 
-        ttk.Label(editor, text="녹음 장치").pack(anchor="w", padx=12, pady=(12, 0))
+        recording_label_row = ttk.Frame(editor)
+        recording_label_row.pack(fill="x", padx=12, pady=(12, 0))
+        ttk.Label(recording_label_row, text="녹음 장치").pack(side="left")
         recording_combo = ttk.Combobox(editor, state="readonly")
         recording_combo["values"] = [
             config_manager.get_display_name(d.id, d.name) for d in self.recording_devices
         ]
         recording_combo.pack(fill="x", padx=12)
+        recording_idx_by_id = {d.id: i for i, d in enumerate(self.recording_devices)}
         existing_recording = existing.get("recording_name")
-        if existing_recording in recording_combo["values"]:
+        if prefill_recording_id and prefill_recording_id in recording_idx_by_id:
+            recording_combo.current(recording_idx_by_id[prefill_recording_id])
+            ttk.Label(
+                recording_label_row, text=" · 현재 사용 중", foreground="#0f6e56"
+            ).pack(side="left")
+        elif existing_recording in recording_combo["values"]:
             recording_combo.set(existing_recording)
         elif self.recording_devices:
             recording_combo.current(0)
