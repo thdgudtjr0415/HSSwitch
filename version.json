@@ -1,6 +1,6 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "E8869DCC320923926973E9F6D8FC4ADE",
-  "notes": "- 트레이 팝업에서 프로필 우클릭 시 수정/삭제 메뉴 추가"
+  "md5": "63EDCF2A120E89E2933B7E30F796ECE1",
+  "notes": "- 프로필 삭제 확인창을 팝업 스타일에 맞는 자체 모달로 교체"
 }
