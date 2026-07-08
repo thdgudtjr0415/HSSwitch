@@ -1,6 +1,6 @@
 {
-  "version": "1.0.5",
-  "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.exe",
-  "md5": "E3600956588966A556230A7DD11F7CFD",
-  "notes": "- 중복 실행 방지 추가 (이미 실행 중이면 새 창 대신 기존 창을 활성화)"
+  "version": "1.0.7",
+  "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
+  "md5": "131DF9C361B7F8936B223D36A3200E66",
+  "notes": "- 내부 파일 폴더명을 _internal에서 HSSwitch_files로 변경"
 }
