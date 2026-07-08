@@ -39,9 +39,7 @@ from tkinter import messagebox
 
 from version import APP_VERSION
 
-# TODO: 배포 위치가 정해지면 이 URL을 채워 넣는다.
-# 비어 있으면 check_for_update()는 아무것도 하지 않고 조용히 넘어간다.
-UPDATE_MANIFEST_URL = ""
+UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/thdgudtjr0415/HSSwitch/main/version.json"
 
 APP_TITLE = "HSSwitch"
 _REQUEST_TIMEOUT = 5
