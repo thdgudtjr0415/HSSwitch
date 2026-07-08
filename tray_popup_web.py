@@ -82,17 +82,9 @@ class Api:
 
     def get_main_view(self):
         """프로필 추가 폼에서 '뒤로'/저장 완료 시 메인 화면 HTML을 다시 만들어 돌려준다.
-        프로필 개수가 바뀌었을 수 있으니 창 크기/위치도 다시 계산해서 맞춘다."""
-        html = _build_main_view_html(self.app)
-        window = self.holder.get("window")
-        if window is not None:
-            try:
-                width, height, x, y = _compute_geometry(self.app)
-                window.resize(width, height)
-                window.move(x, y)
-            except Exception:
-                pass
-        return html
+        팝업이 떠 있는 동안 창 크기/위치가 갑자기 바뀌면 화면에서 튀어 보이므로,
+        처음 열었을 때 계산된 크기/위치를 그대로 유지하고 다시 계산하지 않는다."""
+        return _build_main_view_html(self.app)
 
     def get_add_form(self):
         """'+ 추가' 타일을 눌렀을 때 지금 쓰고 있는 재생/녹음 장치를 미리 채운 입력 폼 HTML."""
