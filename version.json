@@ -1,6 +1,6 @@
 {
-  "version": "1.0.8",
+  "version": "1.1.0",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "3F94B2918DC07377FB6BEAB1824AB307",
-  "notes": "- 시작할 때 자동으로 업데이트 확인할지 켜기/끄기 체크박스 추가"
+  "md5": "1819F28F08D9A65683C65C44E154DEEF",
+  "notes": "- 프로필 탭에 '현재 장치로 빠른 추가' 버튼 추가 (지금 쓰는 재생/녹음 장치가 자동으로 채워짐)"
 }
