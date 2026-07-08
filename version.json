@@ -1,6 +1,6 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.exe",
-  "md5": "CB714922771CAD771F437067B8EDF788",
-  "notes": "- 자동 업데이트 시 이전 프로세스 종료 대기 로직 안정성 개선 (무한 대기 방지)"
+  "md5": "BE8359754DDF2D5817D316E25BA65AB0",
+  "notes": "- 업데이트 후 재실행 전 잠깐 대기 추가 (백신 실시간 검사와 충돌해서 실행 실패하던 문제 완화)"
 }
