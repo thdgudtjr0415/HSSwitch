@@ -144,6 +144,10 @@ move /y "{new_exe_path}" "{current_exe}" >nul
 if not exist "{current_exe}" (
   goto end
 )
+rem 교체 직후 곧바로 실행하면, 방금 새로 생긴 exe를 백신이 실시간 검사하느라
+rem 잠깐 파일을 붙잡고 있는 경우와 겹쳐서 "Failed to load Python DLL" 같은
+rem 오류가 날 수 있다. 검사가 끝날 시간을 조금 벌어준다.
+timeout /t 3 /nobreak >nul
 start "" "{current_exe}"
 :end
 del "%~f0"
