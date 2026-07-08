@@ -1,6 +1,6 @@
 {
-  "version": "1.0.7",
+  "version": "1.0.8",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "131DF9C361B7F8936B223D36A3200E66",
-  "notes": "- 내부 파일 폴더명을 _internal에서 HSSwitch_files로 변경"
+  "md5": "3F94B2918DC07377FB6BEAB1824AB307",
+  "notes": "- 시작할 때 자동으로 업데이트 확인할지 켜기/끄기 체크박스 추가"
 }
