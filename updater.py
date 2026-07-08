@@ -8,24 +8,29 @@ FanControl(Rem0o/FanControl.Releases)의 배포 방식을 참고했다:
     (FanControl은 Updater.exe라는 별도 실행파일을 쓰지만,
      우리는 별도 exe를 만들 필요 없이 임시 배치 스크립트로 같은 역할을 한다)
 
+빌드 방식이 --onefile -> --onedir(폴더 배포)로 바뀌면서, 배포/업데이트 단위도
+exe 파일 하나가 아니라 앱 폴더 전체(zip)로 바뀌었다. onefile은 실행할 때마다
+임시 폴더에 압축을 풀었다가 지우는데, 이 과정이 백신 실시간 검사와 자꾸 겹쳐서
+"Failed to load Python DLL" 류의 오류가 반복적으로 났다. onedir는 그 압축 해제
+과정 자체가 없어서 이 문제가 구조적으로 사라진다.
+
 동작 순서:
 1. UPDATE_MANIFEST_URL 에서 JSON 하나를 받아온다.
    기대 형식:
      {
        "version": "1.1.0",
-       "url": "https://.../HSSwitch.exe",
-       "md5": "27e4bef5ab961ddc93b2faf6ce6900d2",   # 선택. 있으면 검증한다.
+       "url": "https://.../HSSwitch.zip",   # 앱 폴더 전체를 압축한 zip
+       "md5": "27e4bef5ab961ddc93b2faf6ce6900d2",   # 선택. zip 파일의 md5. 있으면 검증한다.
        "notes": "- 버그 수정\\n- 기능 추가"
      }
 2. manifest의 version이 현재 실행 중인 버전(version.py)보다 높으면 사용자에게 확인 창을 띄운다.
-3. "예"를 누르면 새 exe를 임시 폴더에 내려받고(+ md5 있으면 검증),
-   배치 스크립트를 하나 생성해서 "현재 프로세스가 완전히 종료될 때까지 대기 ->
-   기존 exe를 새 exe로 교체 -> 재실행 -> 자기 자신(배치 파일) 삭제" 를 수행하게 한다.
-4. 배치 스크립트를 백그라운드로 띄우고, 앱은 정상 종료 절차(app.quit_app())를 밟는다.
+3. "예"를 누르면 새 zip을 임시 폴더에 내려받고(+ md5 있으면 검증), 그 자리에서 풀어놓는다.
+4. 배치 스크립트를 하나 생성해서 "현재 프로세스가 완전히 종료될 때까지 대기 ->
+   robocopy로 새 폴더 내용을 설치 폴더 위에 덮어쓰기 -> 재실행 -> 임시 파일 정리" 를 수행하게 한다.
+5. 배치 스크립트를 백그라운드로 띄우고, 앱은 정상 종료 절차(app.quit_app())를 밟는다.
 
-호스팅 위치는 아직 정해지지 않았으므로 UPDATE_MANIFEST_URL만 나중에 채우면 된다.
-GitHub Releases를 쓰기로 하면, 릴리즈 노트에 exe를 올리고 raw.githubusercontent.com
-경로의 update.json 파일 하나를 새 버전 낼 때마다 갱신하는 식으로 운영하면 된다.
+호스팅은 GitHub Releases를 쓴다. 새 버전 낼 때마다 dist\\HSSwitch.zip을 릴리즈에
+첨부하고, 저장소 루트의 version.json의 version/md5/notes를 갱신해서 push하면 된다.
 """
 
 import hashlib
@@ -35,6 +40,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import zipfile
 from tkinter import messagebox
 
 from version import APP_VERSION
@@ -104,26 +110,29 @@ def _download_and_apply(app, manifest: dict):
 
     url = manifest["url"]
     current_exe = sys.executable
-    new_exe_path = os.path.join(tempfile.gettempdir(), "HSSwitch_update.exe")
+    install_dir = os.path.dirname(current_exe)
 
-    urllib.request.urlretrieve(url, new_exe_path)
+    work_dir = tempfile.mkdtemp(prefix="hsswitch_update_")
+    zip_path = os.path.join(work_dir, "HSSwitch_update.zip")
+
+    urllib.request.urlretrieve(url, zip_path)
 
     expected_md5 = manifest.get("md5")
-    if expected_md5 and not _verify_md5(new_exe_path, expected_md5):
-        try:
-            os.remove(new_exe_path)
-        except Exception:
-            pass
+    if expected_md5 and not _verify_md5(zip_path, expected_md5):
         messagebox.showerror(APP_TITLE, "다운로드한 파일의 체크섬이 일치하지 않아요. 업데이트를 취소했어요.")
         return
 
+    extract_dir = os.path.join(work_dir, "extracted")
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(extract_dir)
+
     pid = os.getpid()
     batch_path = os.path.join(tempfile.gettempdir(), "hsswitch_update.bat")
-    # 현재 프로세스(pid)가 완전히 죽을 때까지 기다렸다가 exe를 교체하고 재실행한다.
-    # 무한 대기를 방지하기 위해 최대 15초(WAIT_LIMIT회)만 기다리고,
-    # 그래도 안 죽어있으면 강제 종료 후 진행한다. (좀비 프로세스가 파일을
-    # 잠그고 있으면 교체가 계속 실패하거나, 절반만 교체된 채로 새 인스턴스가
-    # 실행돼서 "Failed to load Python DLL" 같은 오류가 나는 걸 방지)
+    # 현재 프로세스(pid)가 완전히 죽을 때까지 기다렸다가, robocopy로 새 폴더
+    # 내용을 설치 폴더 위에 통째로 덮어쓰고 재실행한다.
+    # 무한 대기를 방지하기 위해 최대 15초만 기다리고, 그래도 안 죽어있으면
+    # 강제 종료 후 진행한다. (좀비 프로세스가 파일을 잠그고 있으면 교체가
+    # 계속 실패하거나, 절반만 교체된 채로 새 인스턴스가 실행되는 걸 방지)
     batch_content = f"""@echo off
 setlocal enabledelayedexpansion
 set count=0
@@ -140,16 +149,12 @@ if not errorlevel 1 (
   goto wait
 )
 :after_wait
-move /y "{new_exe_path}" "{current_exe}" >nul
-if not exist "{current_exe}" (
-  goto end
-)
-rem 교체 직후 곧바로 실행하면, 방금 새로 생긴 exe를 백신이 실시간 검사하느라
-rem 잠깐 파일을 붙잡고 있는 경우와 겹쳐서 "Failed to load Python DLL" 같은
-rem 오류가 날 수 있다. 검사가 끝날 시간을 조금 벌어준다.
+robocopy "{extract_dir}" "{install_dir}" /E /IS /IT /R:3 /W:1 /NFL /NDL /NJH /NJS >nul
+rem 교체 직후 곧바로 실행하면, 방금 새로 생긴 파일들을 백신이 실시간 검사하느라
+rem 잠깐 잡고 있는 경우와 겹칠 수 있어서 검사가 끝날 시간을 조금 벌어준다.
 timeout /t 3 /nobreak >nul
 start "" "{current_exe}"
-:end
+rmdir /s /q "{work_dir}" >nul 2>nul
 del "%~f0"
 """
     with open(batch_path, "w", encoding="utf-8") as f:

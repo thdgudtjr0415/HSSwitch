@@ -4,7 +4,7 @@
 
 ## 다운로드
 
-바로 쓰고 싶다면 [최신 릴리즈](https://github.com/thdgudtjr0415/HSSwitch/releases/latest)에서 `HSSwitch.exe`만 받으면 됩니다. 설치 프로그램이 아니라 포터블이라 원하는 폴더에 두고 실행하면 끝이에요.
+바로 쓰고 싶다면 [최신 릴리즈](https://github.com/thdgudtjr0415/HSSwitch/releases/latest)에서 `HSSwitch.zip`을 받아서 원하는 폴더에 압축을 풀고, 그 안의 `HSSwitch.exe`를 실행하면 됩니다. 설치 프로그램이 아니라 포터블이에요. **압축을 푼 폴더 전체(`_internal` 폴더 포함)를 그대로 유지해야** 정상 동작합니다 — `HSSwitch.exe`만 따로 빼서 옮기면 안 돼요.
 
 > **처음 실행할 때 "Windows의 PC 보호" (SmartScreen) 경고가 뜰 수 있어요.**
 > 코드에 문제가 있는 게 아니라, 서명 안 된 파일을 인터넷에서 받으면 Windows가 항상 띄우는 경고예요.
@@ -49,46 +49,56 @@ python main.py
 .\build.bat
 ```
 
+이 스크립트는 PyInstaller로 `dist\HSSwitch\` 폴더(exe + 의존 라이브러리)를 만들고,
+그 폴더 전체를 `dist\HSSwitch.zip`으로 압축까지 해줍니다.
+
 또는 수동으로:
 
 ```powershell
 pip install pyinstaller
-pyinstaller --onefile --windowed --icon=assets/icon.ico --name HSSwitch main.py
+pyinstaller --windowed --icon=assets/icon.ico --name HSSwitch main.py
+powershell -Command "Compress-Archive -Path 'dist\HSSwitch\*' -DestinationPath 'dist\HSSwitch.zip' -Force"
 ```
 
-빌드 결과물은 `dist\HSSwitch.exe`에 생깁니다. `assets/icon.ico`는 헤드셋+마이크 라인 아이콘으로 미리
-만들어둔 멀티 사이즈 아이콘이에요 (48px 이상은 "HS" 글자 배지 포함, 32px 이하는 아이콘만 —
-작은 크기에서 글자가 뭉개지는 걸 방지).
+> **왜 `--onefile`이 아니라 `--onedir`(폴더)인가?** `--onefile`은 실행할 때마다 임시 폴더에
+> 압축을 풀었다가 지우는 방식인데, 이 압축 해제 과정이 백신 실시간 검사와 자꾸 겹쳐서
+> "Failed to load Python DLL" 같은 오류가 간헐적으로 발생했습니다. `--onedir`는 이 과정 자체가
+> 없어서 훨씬 안정적입니다.
+
+`assets/icon.ico`는 헤드셋+마이크 라인 아이콘으로 미리 만들어둔 멀티 사이즈 아이콘이에요
+(48px 이상은 "HS" 글자 배지 포함, 32px 이하는 아이콘만 — 작은 크기에서 글자가 뭉개지는 걸 방지).
 
 ## 새 버전 배포하기 (메인테이너용)
 
 자동 업데이트는 이 저장소 루트의 `version.json`을 앱이 주기적으로 읽어서 동작합니다. 새 버전을 낼 때마다:
 
-1. `version.py`의 `APP_VERSION`을 올린다 (예: `1.0.1` → `1.0.2`)
-2. `.\build.bat`으로 다시 빌드
-3. `Get-FileHash dist\HSSwitch.exe -Algorithm MD5`로 md5 계산
+1. `version.py`의 `APP_VERSION`을 올린다 (예: `1.0.5` → `1.0.6`)
+2. `.\build.bat`으로 다시 빌드 (`dist\HSSwitch.zip`까지 자동 생성됨)
+3. `Get-FileHash dist\HSSwitch.zip -Algorithm MD5`로 **zip 파일**의 md5 계산
 4. [새 릴리즈](https://github.com/thdgudtjr0415/HSSwitch/releases/new) 생성
-   - Tag: `v1.0.2`처럼 버전에 맞게
-   - `dist\HSSwitch.exe`를 **파일명 그대로**(`HSSwitch.exe`) 첨부 — 파일명을 바꾸면
-     `version.json`의 `url`(고정 링크: `.../releases/latest/download/HSSwitch.exe`)이 깨짐
+   - Tag: `v1.0.6`처럼 버전에 맞게
+   - `dist\HSSwitch.zip`을 **파일명 그대로**(`HSSwitch.zip`) 첨부 — 파일명을 바꾸면
+     `version.json`의 `url`(고정 링크: `.../releases/latest/download/HSSwitch.zip`)이 깨짐
    - Publish release
 5. 저장소 루트의 `version.json`을 새 버전/md5/notes로 갱신해서 push
 
 ```json
 {
-  "version": "1.0.2",
-  "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.exe",
-  "md5": "새로_계산한_MD5",
+  "version": "1.0.6",
+  "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
+  "md5": "새로_계산한_zip_MD5",
   "notes": "변경 사항 요약"
 }
 ```
 
-이렇게 하면 이전 버전을 쓰고 있는 사용자가 앱을 켤 때 새 버전 알림을 받고, 확인을 누르면 자동으로
-받아서 교체 후 재시작됩니다.
+이렇게 하면 이전 버전을 쓰고 있는 사용자가 앱을 켤 때 새 버전 알림을 받고, 확인을 누르면 새 zip을
+받아서 풀고, 설치 폴더 위에 덮어쓴 뒤 재시작됩니다.
 
 > **주의**: `UPDATE_MANIFEST_URL`이 비어있는 상태로 빌드된 exe(v1.0.0)는 업데이트 기능 자체가
 > 꺼진 채로 굳어 있어서 자동으로 최신화되지 않습니다. 그 버전을 쓰는 사람은 한 번은 수동으로
-> 새 버전을 받아야 그 다음부터 자동 업데이트가 이어집니다.
+> 새 버전을 받아야 그 다음부터 자동 업데이트가 이어집니다. 마찬가지로 onefile(v1.0.5 이하)에서
+> onedir(v1.0.6 이상)로 넘어가는 첫 업데이트도, 실행 파일 위치 자체가 바뀌는 건 아니라서
+> (같은 이름의 폴더에 그대로 풀림) 자동 업데이트로 자연스럽게 넘어갑니다.
 
 ## 참고 / 문제 해결
 
