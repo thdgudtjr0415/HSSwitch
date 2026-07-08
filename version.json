@@ -1,6 +1,6 @@
 {
   "version": "1.1.0",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "1819F28F08D9A65683C65C44E154DEEF",
-  "notes": "- 프로필 탭에 '현재 장치로 빠른 추가' 버튼 추가 (지금 쓰는 재생/녹음 장치가 자동으로 채워짐)"
+  "md5": "CA7E8217A572B05196E4CA4759D59C99",
+  "notes": "- 트레이 팝업에서 프로필 추가 시 현재 재생/녹음 장치가 자동으로 채워지는 인라인 폼 추가"
 }
