@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.exe",
-  "md5": "8DE0A24AC946F4BB30A59D3237FB983B",
-  "notes": "첫 배포"
+  "md5": "2C8148ABB9B6B470CB722F0B77065971",
+  "notes": "- 창을 Windows 네이티브(vista) 테마로 표시\n- 트레이 팝업이 다른 창에 가려지던 문제 수정\n- 자동 업데이트 기능 추가"
 }
