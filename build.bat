@@ -23,7 +23,7 @@ if errorlevel 1 (
 
 echo.
 echo [3/4] Building app folder with PyInstaller (onedir mode, not onefile)...
-pyinstaller --windowed --icon=assets\icon.ico --name HSSwitch --contents-directory HSSwitch_files main.py
+pyinstaller --windowed --icon=assets\icon.ico --add-data "assets;assets" --name HSSwitch --contents-directory HSSwitch_files main.py
 if errorlevel 1 (
     echo.
     echo [FAILED] Build failed. Check the log above.

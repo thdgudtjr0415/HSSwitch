@@ -31,6 +31,16 @@ from version import APP_VERSION
 APP_TITLE = "HSSwitch"
 PROFILE_ICONS = ["headset", "speaker", "mic", "default"]
 
+
+def _resource_path(relative_path: str) -> str:
+    """소스 실행과 PyInstaller(onedir) 빌드 양쪽에서 assets 같은 번들 데이터 파일을 찾는다.
+    PyInstaller는 --add-data로 넣은 파일을 sys._MEIPASS 아래에 풀어둔다."""
+    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
+
+
+ICON_ICO_PATH = _resource_path(os.path.join("assets", "icon.ico"))
+
 _SINGLE_INSTANCE_MUTEX_NAME = "Global\\HSSwitchSingleInstanceMutex"
 _instance_mutex_handle = None  # GC/프로세스 종료 전까지 살려둬야 뮤텍스가 유지됨
 
@@ -69,6 +79,13 @@ class HSSwitchApp:
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
         try:
+            # 기본 Tk "깃털" 아이콘 대신 우리 아이콘을 창 제목표시줄/작업 표시줄에 사용.
+            # default=True로 주면 이 root에서 파생되는 모든 Toplevel(프로필 추가/수정 창 등)에도 적용됨.
+            self.root.iconbitmap(default=ICON_ICO_PATH)
+        except Exception:
+            pass  # 아이콘 파일을 못 찾아도 앱 실행 자체는 막지 않음
+
+        try:
             ttk.Style(self.root).theme_use("vista")
         except tk.TclError:
             pass  # "vista" 테마는 Windows 전용, 없는 환경이면 기본 테마로 조용히 폴백
@@ -86,24 +103,24 @@ class HSSwitchApp:
         self.refresh_devices()
         self._register_hotkeys()
 
+        self.tray_icon = None
+        self._start_tray_thread()
+
         # 부팅 직후 실행됐을 때 오디오 장치(특히 무선 헤드셋)가 아직 안 잡혀서
         # refresh_devices()가 빈 목록을 돌려줬을 수 있으니, 몇 초 뒤 한 번 더 조용히 재시도한다.
         if "--startup" in sys.argv:
             self.root.after(4000, self._retry_refresh_devices_if_empty)
             self.root.after(10000, self._retry_refresh_devices_if_empty)
 
-    def _retry_refresh_devices_if_empty(self):
-        if not self.playback_devices and not self.recording_devices:
-            self.refresh_devices()
-
-        self.tray_icon = None
-        self._start_tray_thread()
-
         # 시작하자마자 확인하면 창 뜨는 타이밍과 겹치니 살짝 늦춰서 백그라운드 확인.
         # "자동 업데이트 확인"이 꺼져 있으면 시작할 때는 아예 확인하지 않는다
         # (설정 탭의 수동 "업데이트 확인" 버튼은 이 설정과 무관하게 항상 동작한다).
         if config_manager.load_auto_update_check():
             self.root.after(2000, lambda: self._check_for_update(silent=True))
+
+    def _retry_refresh_devices_if_empty(self):
+        if not self.playback_devices and not self.recording_devices:
+            self.refresh_devices()
 
     def switch_device(self, playback_id, recording_id):
         switch_device(playback_id, recording_id)
