@@ -1,6 +1,6 @@
 {
-  "version": "1.1.4",
+  "version": "1.1.5",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "489F182398F67F6DF1B9C5EA57DBAB40",
-  "notes": "- 부팅 직후 오디오 장치 미준비로 자동 실행이 안 되던 문제 수정"
+  "md5": "250D813ECE1ACA4F49B19B0CE0D68561",
+  "notes": "- 트레이 아이콘 등록 실패 방어 및 자동 재시도 추가"
 }
