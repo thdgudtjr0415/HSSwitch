@@ -17,12 +17,20 @@ class DeviceInfo:
 
 
 def _get_devices(data_flow: int) -> list[DeviceInfo]:
-    with warnings.catch_warnings():
-        # 일부 비활성/특수 장치에서 COMError 경고가 뜨는데 무시해도 무방
-        warnings.simplefilter("ignore", UserWarning)
-        devices = AudioUtilities.GetAllDevices(
-            data_flow=data_flow, device_state=DEVICE_STATE.ACTIVE.value
-        )
+    # 부팅 직후(특히 --startup으로 자동 실행될 때)는 Windows 오디오 서비스나
+    # 무선 장치 동글이 아직 준비되지 않아 GetAllDevices 자체가 COM 예외를 던질 수 있다.
+    # 여기서 예외가 새 나가면 호출한 쪽(트레이 앱 초기화 스레드)이 통째로 죽어버려서
+    # 프로그램이 아무 반응 없이 실행 안 되는 것처럼 보이므로, 실패하면 빈 목록을 돌려준다.
+    try:
+        with warnings.catch_warnings():
+            # 일부 비활성/특수 장치에서 COMError 경고가 뜨는데 무시해도 무방
+            warnings.simplefilter("ignore", UserWarning)
+            devices = AudioUtilities.GetAllDevices(
+                data_flow=data_flow, device_state=DEVICE_STATE.ACTIVE.value
+            )
+    except Exception:
+        return []
+
     result = []
     for d in devices:
         try:

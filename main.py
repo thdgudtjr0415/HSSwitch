@@ -8,8 +8,10 @@ HSSwitch — 스피커/헤드셋/마이크 빠른 전환 프로그램
 """
 
 import ctypes
+import os
 import sys
 import threading
+import traceback
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -83,6 +85,16 @@ class HSSwitchApp:
         self._build_ui()
         self.refresh_devices()
         self._register_hotkeys()
+
+        # 부팅 직후 실행됐을 때 오디오 장치(특히 무선 헤드셋)가 아직 안 잡혀서
+        # refresh_devices()가 빈 목록을 돌려줬을 수 있으니, 몇 초 뒤 한 번 더 조용히 재시도한다.
+        if "--startup" in sys.argv:
+            self.root.after(4000, self._retry_refresh_devices_if_empty)
+            self.root.after(10000, self._retry_refresh_devices_if_empty)
+
+    def _retry_refresh_devices_if_empty(self):
+        if not self.playback_devices and not self.recording_devices:
+            self.refresh_devices()
 
         self.tray_icon = None
         self._start_tray_thread()
@@ -579,18 +591,38 @@ def main():
     holder = {}
 
     def tk_thread():
-        # Tk()는 자신을 생성한 스레드에서만 mainloop을 돌릴 수 있다
-        comtypes.CoInitialize()
-        root = tk.Tk()
-        app = HSSwitchApp(root)
-        if "--startup" in sys.argv:
-            app.hide_to_tray()
-        holder["app"] = app
-        ready.set()
-        root.mainloop()
+        # Tk()는 자신을 생성한 스레드에서만 mainloop을 돌릴 수 있다.
+        # 초기화 중 어디서든 예외가 나면 ready.set()이 절대 호출되지 않아서
+        # main()이 ready.wait()에서 영원히 멈추고(=프로그램이 아무 반응 없이 "실행 안 됨")
+        # 트레이 아이콘도 안 뜨는 상태가 되므로, 무슨 일이 있어도 ready는 반드시 세팅한다.
+        try:
+            comtypes.CoInitialize()
+            root = tk.Tk()
+            app = HSSwitchApp(root)
+            if "--startup" in sys.argv:
+                app.hide_to_tray()
+            holder["app"] = app
+        except Exception:
+            holder["error"] = traceback.format_exc()
+        finally:
+            ready.set()
+
+        if "app" in holder:
+            root.mainloop()
 
     threading.Thread(target=tk_thread, daemon=True).start()
     ready.wait()
+
+    if "error" in holder:
+        try:
+            log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HSSwitch")
+            os.makedirs(log_dir, exist_ok=True)
+            with open(os.path.join(log_dir, "crash.log"), "w", encoding="utf-8") as f:
+                f.write(holder["error"])
+        except Exception:
+            pass
+        return
+
     app = holder["app"]
 
     # pywebview는 창 생성/이벤트 루프를 진짜 메인 스레드에서 실행해야 한다
