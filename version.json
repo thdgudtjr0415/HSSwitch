@@ -1,6 +1,6 @@
 {
-  "version": "1.1.3",
+  "version": "1.1.4",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "2552443A4843D9D4A5504B9CB6A0EB8C",
-  "notes": "- 프로필 삭제 확인창을 자체 모달로 교체\n- 프로필 추가/삭제 후 팝업 위치가 튀던 문제 수정"
+  "md5": "489F182398F67F6DF1B9C5EA57DBAB40",
+  "notes": "- 부팅 직후 오디오 장치 미준비로 자동 실행이 안 되던 문제 수정"
 }
