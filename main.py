@@ -556,7 +556,33 @@ class HSSwitchApp:
         menu = pystray.Menu(show_popup_item, open_item, pystray.Menu.SEPARATOR, quit_item)
 
         self.tray_icon = pystray.Icon("hsswitch", self._make_tray_image(), APP_TITLE, menu)
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+        def run_tray(retry=True):
+            try:
+                comtypes.CoInitialize()
+            except Exception:
+                pass
+            try:
+                self.tray_icon.run()
+            except Exception:
+                self._log_error("tray_icon.run() failed")
+                if retry:
+                    # 업데이트 직후 재시작처럼 트레이 등록 타이밍이 꼬였을 수 있으니 한 번만 재시도
+                    import time
+                    time.sleep(2)
+                    run_tray(retry=False)
+
+        threading.Thread(target=run_tray, daemon=True).start()
+
+    @staticmethod
+    def _log_error(message: str):
+        try:
+            log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HSSwitch")
+            os.makedirs(log_dir, exist_ok=True)
+            with open(os.path.join(log_dir, "crash.log"), "a", encoding="utf-8") as f:
+                f.write(f"{message}\n{traceback.format_exc()}\n\n")
+        except Exception:
+            pass
 
     def _open_tray_popup(self, icon=None, item=None):
         self.root.after(0, self._show_tray_popup)
