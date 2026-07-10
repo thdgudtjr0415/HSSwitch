@@ -1,11 +1,18 @@
 """
 Windows에 연결된 재생(스피커/헤드셋) 장치와 녹음(마이크) 장치 목록을
 조회하는 모듈. pycaw의 공식 문서 예제 패턴을 그대로 따른다.
+
+이 모듈의 함수들은 tkinter 메인 스레드뿐 아니라 pywebview의 JS-Python 브리지
+콜백 스레드(트레이 팝업)에서도 호출될 수 있어서 어느 스레드에서 불릴지 알 수
+없다. volume_control.py와 동일하게, 매 호출마다 자체적으로 COM을 초기화한다
+(이미 초기화된 스레드에서 다시 불러도 안전하고, 호출 스레드 종류에 의존하지 않게
+된다).
 """
 
 import warnings
 from dataclasses import dataclass
 
+import comtypes
 from pycaw.constants import DEVICE_STATE, EDataFlow
 from pycaw.pycaw import AudioUtilities
 
@@ -21,6 +28,7 @@ def _get_devices(data_flow: int) -> list[DeviceInfo]:
     # 무선 장치 동글이 아직 준비되지 않아 GetAllDevices 자체가 COM 예외를 던질 수 있다.
     # 여기서 예외가 새 나가면 호출한 쪽(트레이 앱 초기화 스레드)이 통째로 죽어버려서
     # 프로그램이 아무 반응 없이 실행 안 되는 것처럼 보이므로, 실패하면 빈 목록을 돌려준다.
+    comtypes.CoInitialize()
     try:
         with warnings.catch_warnings():
             # 일부 비활성/특수 장치에서 COMError 경고가 뜨는데 무시해도 무방
@@ -51,6 +59,7 @@ def get_recording_devices() -> list[DeviceInfo]:
 
 
 def get_default_playback_id() -> str | None:
+    comtypes.CoInitialize()
     try:
         return AudioUtilities.GetSpeakers().id
     except Exception:
@@ -58,6 +67,7 @@ def get_default_playback_id() -> str | None:
 
 
 def get_default_recording_id() -> str | None:
+    comtypes.CoInitialize()
     try:
         device_enumerator = AudioUtilities.GetDeviceEnumerator()
         # eCapture=1, eMultimedia=1
