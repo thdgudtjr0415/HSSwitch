@@ -1,6 +1,6 @@
 {
-  "version": "1.1.7",
+  "version": "1.1.8",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "10F0CC658C6FE360D30034E33FABC873",
-  "notes": "- 트레이 아이콘 등록 실패 방어 및 자동 재시도\n- 트레이 아이콘 초기화 위치 버그 수정\n- 메인 창/작업 표시줄 기본 아이콘을 HSSwitch 아이콘으로 교체"
+  "md5": "2B350B2070ACE877090B9B928C769C35",
+  "notes": "- 트레이 팝업에서 오디오 장치 정보 조회 시 COM 초기화 누락 방어"
 }
