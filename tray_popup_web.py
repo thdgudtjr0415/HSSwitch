@@ -189,6 +189,8 @@ def _volume_slider_html(device_id, key):
     is_muted = volume_control.get_mute(device_id)
     bubble_id = f"vol_bubble_{key}"
     icon_id = f"vol_icon_{key}"
+    slider_id = f"vol_slider_{key}"
+    num_id = f"vol_num_{key}"
     muted_cls = "muted" if is_muted else ""
     return f'''
     <div class="volume-row">
@@ -197,11 +199,13 @@ def _volume_slider_html(device_id, key):
         <span class="icon-off">{ICONS["speaker_muted"]}</span>
       </span>
       <div class="slider-wrap">
-        <input type="range" min="0" max="100" value="{current}" class="slider"
-               oninput="hswVolInput(this, '{device_id}', '{bubble_id}')"
+        <input type="range" min="0" max="100" value="{current}" class="slider" id="{slider_id}"
+               oninput="hswVolInput(this, '{device_id}', '{bubble_id}', '{num_id}')"
                onmouseup="hswVolEnd('{bubble_id}')" ontouchend="hswVolEnd('{bubble_id}')">
         <span class="vol-bubble" id="{bubble_id}">{current}</span>
       </div>
+      <input type="number" min="0" max="100" value="{current}" class="vol-num" id="{num_id}"
+             onchange="hswVolNumInput(this, '{device_id}', '{slider_id}')">
     </div>'''
 
 
@@ -382,6 +386,11 @@ def _build_html(app) -> str:
     padding: 1px 7px; border-radius: 8px; opacity: 0; transition: opacity 0.15s;
     pointer-events: none; white-space: nowrap;
   }}
+  .vol-num {{
+    width: 34px; flex-shrink: 0; background: {p['card_bg']}; color: {p['fg']};
+    border: none; border-radius: 6px; padding: 2px 4px; font-size: 11px;
+    text-align: center; outline: none;
+  }}
   .form-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }}
   .back-btn {{ font-size: 12px; color: {p['fg_muted']}; cursor: pointer; }}
   .back-btn:hover {{ color: {p['fg']}; }}
@@ -554,21 +563,32 @@ def _build_html(app) -> str:
       pywebview.api.close();
     }});
 
-    function hswVolInput(el, deviceId, bubbleId) {{
+    function hswVolInput(el, deviceId, bubbleId, numId) {{
       pywebview.api.set_volume(deviceId, el.value);
       var bubble = document.getElementById(bubbleId);
-      if (!bubble) return;
-      bubble.textContent = el.value;
-      bubble.style.opacity = '1';
-      var pct = (el.value - el.min) / (el.max - el.min);
-      var offset = pct * (el.offsetWidth - 16) + 8;
-      bubble.style.left = offset + 'px';
+      if (bubble) {{
+        bubble.textContent = el.value;
+        bubble.style.opacity = '1';
+        var pct = (el.value - el.min) / (el.max - el.min);
+        var offset = pct * (el.offsetWidth - 16) + 8;
+        bubble.style.left = offset + 'px';
+      }}
+      var num = document.getElementById(numId);
+      if (num) num.value = el.value;
     }}
 
     function hswVolEnd(bubbleId) {{
       var bubble = document.getElementById(bubbleId);
       if (!bubble) return;
       setTimeout(function() {{ bubble.style.opacity = '0'; }}, 500);
+    }}
+
+    function hswVolNumInput(el, deviceId, sliderId) {{
+      var val = Math.max(0, Math.min(100, parseInt(el.value, 10) || 0));
+      el.value = val;
+      var slider = document.getElementById(sliderId);
+      if (slider) slider.value = val;
+      pywebview.api.set_volume(deviceId, val);
     }}
 
     function hswToggleMute(deviceId, key) {{
