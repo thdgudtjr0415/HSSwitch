@@ -204,7 +204,7 @@ def _volume_slider_html(device_id, key):
                onmouseup="hswVolEnd('{bubble_id}')" ontouchend="hswVolEnd('{bubble_id}')">
         <span class="vol-bubble" id="{bubble_id}">{current}</span>
       </div>
-      <input type="number" min="0" max="100" value="{current}" class="vol-num" id="{num_id}"
+      <input type="text" inputmode="numeric" maxlength="3" value="{current}" class="vol-num" id="{num_id}"
              onchange="hswVolNumInput(this, '{device_id}', '{slider_id}')">
     </div>'''
 
