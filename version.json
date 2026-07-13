@@ -1,6 +1,6 @@
 {
-  "version": "1.1.8",
+  "version": "1.1.9",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "2B350B2070ACE877090B9B928C769C35",
-  "notes": "- 트레이 팝업에서 오디오 장치 정보 조회 시 COM 초기화 누락 방어"
+  "md5": "EB2A02EF2EC68296C30DD63EB88BAF33",
+  "notes": "- 트레이 팝업 볼륨 슬라이더 옆에 숫자 직접 입력 기능 추가"
 }
