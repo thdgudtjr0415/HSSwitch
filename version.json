@@ -1,6 +1,6 @@
 {
-  "version": "1.1.9",
+  "version": "1.1.10",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "EB2A02EF2EC68296C30DD63EB88BAF33",
-  "notes": "- 트레이 팝업 볼륨 슬라이더 옆에 숫자 직접 입력 기능 추가"
+  "md5": "91FFB27F0541F190CDE0E30022DF4CC9",
+  "notes": "- 볼륨 숫자 입력 칸의 스핀 버튼 제거 및 가운데 정렬 적용"
 }
