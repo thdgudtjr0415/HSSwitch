@@ -1,6 +1,6 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "F8488276B3584AB8CCFF2B45C6958DF1",
-  "notes": "- 프로필에 원하는 이미지를 아이콘으로 지정할 수 있는 기능 추가"
+  "md5": "A11080404E6BE9DE3439D11EC2202FFA",
+  "notes": "- 팝업 아이콘 드롭다운에서 내 이미지를 지정할 수 있어요\n- 팝업 드롭다운 목록이 창 밖으로 벗어나지 않아요\n- 메인 창 첫 화면이 프로필이에요\n- 장치 별칭이 자동으로 저장돼요"
 }
