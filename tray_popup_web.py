@@ -123,6 +123,15 @@ class Api:
         self._refresh_app()
         return {"ok": True}
 
+    def open_icon_editor(self, idx, name, playback_id, recording_id, hotkey):
+        """폼에서 입력한 값을 가지고 메인 창 편집기를 연다(이미지 선택/붙여넣기는 메인 창에서만 가능)."""
+        draft = self._build_profile_dict(name, "default", playback_id, recording_id, hotkey)
+        del draft["icon"]
+        edit_index = int(idx) if idx not in (None, "") else None
+        self._close()
+        self.app.root.after(0, lambda: self.app.open_profile_editor_with_draft(edit_index, draft))
+        return {"ok": True}
+
     def delete_profile(self, idx):
         config_manager.delete_profile(int(idx))
         self._refresh_app()
@@ -314,6 +323,7 @@ def _build_profile_form_html(app, edit_index: int | None = None) -> str:
         f'{PROFILE_ICON_LABELS[k]}</option>'
         for k in PROFILE_ICON_LABELS
     )
+    icon_options += '<option value="main_editor">내 이미지 지정… (메인 창에서)</option>'
 
     title = "프로필 수정" if existing is not None else "프로필 추가"
     name_value = _esc(existing.get("name", "")) if existing else ""
@@ -332,7 +342,7 @@ def _build_profile_form_html(app, edit_index: int | None = None) -> str:
       </div>
       <div class="field">
         <div class="field-label">아이콘</div>
-        <select id="add-icon" class="select-input">{icon_options}</select>
+        <select id="add-icon" class="select-input" onchange="hswOnIconChange(this)">{icon_options}</select>
       </div>
       <div class="field">
         <div class="field-label">재생 장치{playback_hint}</div>
@@ -435,6 +445,17 @@ def _build_html(app) -> str:
     border: none; border-radius: 8px; padding: 8px 10px; font-size: 13px; outline: none;
   }}
   .select-input {{ appearance: none; cursor: pointer; }}
+  .cs-trigger {{
+    width: 100%; box-sizing: border-box; background: {p['card_bg']}; color: {p['fg']};
+    border-radius: 8px; padding: 8px 10px; font-size: 13px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }}
+  .cs-list {{
+    position: fixed; background: {p['card_bg']}; border-radius: 8px; overflow-y: auto;
+    max-height: 170px; box-shadow: 0 4px 16px rgba(0,0,0,0.35); z-index: 1000;
+  }}
+  .cs-item {{ padding: 8px 10px; font-size: 12px; cursor: pointer; color: {p['fg']}; }}
+  .cs-item:hover {{ background: {p['card_hover']}; }}
   .save-row {{ margin-top: 16px; }}
   .save-btn {{
     width: 100%; background: {p['accent']}; color: {p['fg_on_accent']}; border: none;
@@ -466,9 +487,59 @@ def _build_html(app) -> str:
   <div id="root">{main_view}</div>
 
   <script>
+    // 기본 <select>의 목록은 팝업 창 밖으로 펼쳐지므로, 창 안에서 열리는 목록으로 바꿔 보여준다.
+    // 값은 원래 <select>에 그대로 들어가서 다른 코드는 바뀌지 않는다.
+    function hswCloseSelectList() {{
+      var old = document.getElementById('cs-list');
+      if (old) old.remove();
+    }}
+
+    function hswEnhanceSelects() {{
+      document.querySelectorAll('select.select-input').forEach(function(sel) {{
+        sel.style.display = 'none';
+        var trigger = document.createElement('div');
+        trigger.className = 'cs-trigger';
+        trigger.textContent = sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].text : '장치 없음';
+        trigger.onclick = function(e) {{
+          e.stopPropagation();
+          var wasOpen = document.getElementById('cs-list');
+          hswCloseSelectList();
+          if (wasOpen) return;
+          var list = document.createElement('div');
+          list.id = 'cs-list';
+          list.className = 'cs-list';
+          Array.from(sel.options).forEach(function(opt) {{
+            var item = document.createElement('div');
+            item.className = 'cs-item';
+            item.textContent = opt.text;
+            item.onclick = function() {{
+              sel.value = opt.value;
+              trigger.textContent = opt.text;
+              hswCloseSelectList();
+              sel.dispatchEvent(new Event('change'));
+            }};
+            list.appendChild(item);
+          }});
+          document.body.appendChild(list);
+          var r = trigger.getBoundingClientRect();
+          list.style.left = r.left + 'px';
+          list.style.width = r.width + 'px';
+          var below = window.innerHeight - r.bottom - 8;
+          if (list.offsetHeight > below && r.top > below) {{
+            list.style.top = Math.max(8, r.top - list.offsetHeight - 4) + 'px';
+          }} else {{
+            list.style.top = (r.bottom + 4) + 'px';
+          }}
+        }};
+        sel.parentNode.insertBefore(trigger, sel);
+      }});
+    }}
+    document.addEventListener('click', hswCloseSelectList);
+
     function hswShowAdd() {{
       pywebview.api.get_add_form().then(function(html) {{
         document.getElementById('root').innerHTML = html;
+        hswEnhanceSelects();
         var nameInput = document.getElementById('add-name');
         if (nameInput) nameInput.focus();
       }});
@@ -480,16 +551,30 @@ def _build_html(app) -> str:
       }});
     }}
 
-    function hswSaveProfile() {{
-      var name = document.getElementById('add-name').value;
-      var icon = document.getElementById('add-icon').value;
+    function hswFormValues() {{
       var playbackEl = document.getElementById('add-playback');
       var recordingEl = document.getElementById('add-recording');
-      var hotkey = document.getElementById('add-hotkey').value;
-      var playbackId = playbackEl ? playbackEl.value : null;
-      var recordingId = recordingEl ? recordingEl.value : null;
       var editIdxEl = document.getElementById('add-edit-index');
-      var editIdx = editIdxEl && editIdxEl.value !== '' ? editIdxEl.value : null;
+      return {{
+        name: document.getElementById('add-name').value,
+        icon: document.getElementById('add-icon').value,
+        hotkey: document.getElementById('add-hotkey').value,
+        playbackId: playbackEl ? playbackEl.value : null,
+        recordingId: recordingEl ? recordingEl.value : null,
+        editIdx: editIdxEl && editIdxEl.value !== '' ? editIdxEl.value : null
+      }};
+    }}
+
+    function hswOnIconChange(sel) {{
+      if (sel.value !== 'main_editor') return;
+      var f = hswFormValues();
+      pywebview.api.open_icon_editor(f.editIdx, f.name, f.playbackId, f.recordingId, f.hotkey);
+    }}
+
+    function hswSaveProfile() {{
+      var f = hswFormValues();
+      var name = f.name, icon = f.icon, hotkey = f.hotkey;
+      var playbackId = f.playbackId, recordingId = f.recordingId, editIdx = f.editIdx;
       var call = editIdx !== null
         ? pywebview.api.update_profile(editIdx, name, icon, playbackId, recordingId, hotkey)
         : pywebview.api.save_new_profile(name, icon, playbackId, recordingId, hotkey);
@@ -540,6 +625,7 @@ def _build_html(app) -> str:
       hswCloseProfileMenu();
       pywebview.api.get_edit_form(idx).then(function(html) {{
         document.getElementById('root').innerHTML = html;
+        hswEnhanceSelects();
         var nameInput = document.getElementById('add-name');
         if (nameInput) nameInput.focus();
       }});

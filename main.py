@@ -232,8 +232,8 @@ class HSSwitchApp:
         profile_tab = ttk.Frame(notebook)
         alias_tab = ttk.Frame(notebook)
         settings_tab = ttk.Frame(notebook)
-        notebook.add(individual_tab, text="개별 전환")
         notebook.add(profile_tab, text="프로필")
+        notebook.add(individual_tab, text="개별 전환")
         notebook.add(alias_tab, text="장치 별칭")
         notebook.add(settings_tab, text="설정")
 
@@ -286,6 +286,9 @@ class HSSwitchApp:
         self.profile_tree.pack(fill="both", expand=True, padx=10, pady=(12, 6))
         self.profile_tree.bind("<Double-1>", lambda e: self._on_apply_profile())
 
+        self.profile_hint_var = tk.StringVar(value="")
+        ttk.Label(parent, textvariable=self.profile_hint_var, foreground="gray").pack(anchor="w", padx=10)
+
         btn_row = ttk.Frame(parent)
         btn_row.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(btn_row, text="전환", command=self._on_apply_profile).pack(side="left")
@@ -329,13 +332,19 @@ class HSSwitchApp:
                 row, text=f"[{kind}] {device.name}", width=48, wraplength=340, anchor="w"
             ).pack(side="left")
             var = tk.StringVar(value=aliases.get(device.id, ""))
-            ttk.Entry(row, textvariable=var, width=16).pack(side="left", padx=(6, 6))
+            entry = ttk.Entry(row, textvariable=var, width=16)
+            entry.pack(side="left", padx=(6, 6))
+            # Enter나 다른 곳을 누르면 자동 저장(바뀐 경우만)
+            for event in ("<Return>", "<FocusOut>"):
+                entry.bind(event, lambda e, dev=device, v=var: self._save_alias(dev, v, only_if_changed=True))
             ttk.Button(
                 row, text="저장", command=lambda dev=device, v=var: self._save_alias(dev, v)
             ).pack(side="left")
 
-    def _save_alias(self, device, var):
+    def _save_alias(self, device, var, only_if_changed=False):
         alias = var.get().strip()
+        if only_if_changed and alias == config_manager.load_aliases().get(device.id, ""):
+            return
         config_manager.set_alias(device.id, alias if alias else None)
         self.status_var.set(f"별칭 저장됨: {device.name} -> {alias or '(해제)'}")
 
@@ -399,6 +408,9 @@ class HSSwitchApp:
                     p.get("hotkey") or "-",
                 ),
             )
+        self.profile_hint_var.set(
+            "" if self.profiles else "프로필이 없어요. '현재 장치로 빠른 추가'를 누르면 지금 쓰는 장치로 바로 만들 수 있어요."
+        )
         active = self.profiles[active_idx] if active_idx is not None else None
         self._update_tray(active, default_playback, default_recording)
 
@@ -452,11 +464,16 @@ class HSSwitchApp:
             self._refresh_profile_tree()
             self._register_hotkeys()
 
+    def open_profile_editor_with_draft(self, edit_index: int | None, draft: dict):
+        """팝업 폼에서 입력하던 값(draft)을 이어받아 편집기를 연다."""
+        self._open_profile_editor(edit_index=edit_index, draft=draft)
+
     def _open_profile_editor(
         self,
         edit_index: int | None = None,
         prefill_playback_id: str | None = None,
         prefill_recording_id: str | None = None,
+        draft: dict | None = None,
     ):
         self.show_from_tray()
 
@@ -467,6 +484,7 @@ class HSSwitchApp:
         self._center_window(editor, 380, 500)
 
         existing = self.profiles[edit_index] if edit_index is not None else {}
+        existing = {**existing, **(draft or {})}
 
         ttk.Label(editor, text="이름").pack(anchor="w", padx=12, pady=(12, 0))
         name_var = tk.StringVar(value=existing.get("name", ""))
