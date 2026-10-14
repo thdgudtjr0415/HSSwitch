@@ -11,17 +11,20 @@ import ctypes
 import os
 import sys
 import threading
+import time
 import traceback
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 import comtypes
 import keyboard
 import pystray
+from PIL import ImageTk
 
 import audio_devices
 import config_manager
 import icon_art
+import icon_store
 import startup_manager
 import tray_popup_web
 import updater
@@ -29,12 +32,10 @@ from policy_config import set_default_device
 from version import APP_VERSION
 
 APP_TITLE = "HSSwitch"
-PROFILE_ICONS = ["headset", "speaker", "mic", "default"]
 
 
 def _resource_path(relative_path: str) -> str:
-    """소스 실행과 PyInstaller(onedir) 빌드 양쪽에서 assets 같은 번들 데이터 파일을 찾는다.
-    PyInstaller는 --add-data로 넣은 파일을 sys._MEIPASS 아래에 풀어둔다."""
+    """소스 실행과 PyInstaller 빌드(번들 파일은 sys._MEIPASS 아래) 양쪽에서 데이터 파일 경로를 찾는다."""
     base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
 
@@ -42,15 +43,11 @@ def _resource_path(relative_path: str) -> str:
 ICON_ICO_PATH = _resource_path(os.path.join("assets", "icon.ico"))
 
 _SINGLE_INSTANCE_MUTEX_NAME = "Global\\HSSwitchSingleInstanceMutex"
-_instance_mutex_handle = None  # GC/프로세스 종료 전까지 살려둬야 뮤텍스가 유지됨
+_instance_mutex_handle = None  # 프로세스가 끝날 때까지 들고 있어야 뮤텍스가 유지된다
 
 
 def _ensure_single_instance() -> bool:
-    """
-    이미 실행 중인 인스턴스가 있으면 그 창을 앞으로 가져오고 False를 반환한다.
-    (exe 사본을 여러 개 실행하거나, 업데이트 재실행 타이밍이 겹칠 때 트레이 아이콘이
-    여러 개 뜨는 걸 방지)
-    """
+    """이미 실행 중이면 그 창을 앞으로 가져오고 False를 반환한다(트레이 아이콘이 여러 개 뜨는 것 방지)."""
     global _instance_mutex_handle
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _SINGLE_INSTANCE_MUTEX_NAME)
     already_running = ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
@@ -64,36 +61,43 @@ def _ensure_single_instance() -> bool:
     return True
 
 
-def switch_device(playback_id: str | None, recording_id: str | None):
-    if playback_id:
-        set_default_device(playback_id)
-    if recording_id:
-        set_default_device(recording_id)
+def switch_device(playback_id: str | None, recording_id: str | None) -> list[str]:
+    """재생/녹음을 따로 전환한다. 한쪽이 실패해도 다른 쪽은 계속하고, 실패한 항목("재생"/"녹음")을 돌려준다."""
+    failed = []
+    for kind, device_id in (("재생", playback_id), ("녹음", recording_id)):
+        if not device_id:
+            continue
+        try:
+            set_default_device(device_id)
+        except Exception:
+            failed.append(kind)
+    return failed
 
 
 class HSSwitchApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.geometry("540x500")
+        self._center_window(self.root, 640, 500)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
         try:
-            # 기본 Tk "깃털" 아이콘 대신 우리 아이콘을 창 제목표시줄/작업 표시줄에 사용.
-            # default=True로 주면 이 root에서 파생되는 모든 Toplevel(프로필 추가/수정 창 등)에도 적용됨.
+            # default=True: 이 root에서 파생되는 Toplevel(프로필 편집 창 등)에도 같은 아이콘이 적용된다
             self.root.iconbitmap(default=ICON_ICO_PATH)
         except Exception:
-            pass  # 아이콘 파일을 못 찾아도 앱 실행 자체는 막지 않음
+            pass  # 아이콘을 못 찾아도 실행은 막지 않는다
 
         try:
             ttk.Style(self.root).theme_use("vista")
         except tk.TclError:
-            pass  # "vista" 테마는 Windows 전용, 없는 환경이면 기본 테마로 조용히 폴백
+            pass  # Windows 전용 테마. 없으면 기본 테마 사용
 
-        self.audio_module = audio_devices
         self.playback_devices: list[audio_devices.DeviceInfo] = []
         self.recording_devices: list[audio_devices.DeviceInfo] = []
         self.profiles: list[dict] = config_manager.load_profiles()
+        # refresh_devices()가 트레이 갱신을 부르므로, 트레이가 만들어지기 전에도 속성은 있어야 한다
+        self.tray_icon = None
+        self._tray_key = None
 
         # 다른 스레드에서 tkinter 위젯을 직접 호출하면 안 되므로 미리 캐싱
         self.screen_width = root.winfo_screenwidth()
@@ -103,18 +107,14 @@ class HSSwitchApp:
         self.refresh_devices()
         self._register_hotkeys()
 
-        self.tray_icon = None
         self._start_tray_thread()
 
-        # 부팅 직후 실행됐을 때 오디오 장치(특히 무선 헤드셋)가 아직 안 잡혀서
-        # refresh_devices()가 빈 목록을 돌려줬을 수 있으니, 몇 초 뒤 한 번 더 조용히 재시도한다.
+        # 부팅 직후에는 오디오 장치(특히 무선 헤드셋)가 아직 안 잡혀 목록이 비어 있을 수 있어 다시 조회한다
         if "--startup" in sys.argv:
             self.root.after(4000, self._retry_refresh_devices_if_empty)
             self.root.after(10000, self._retry_refresh_devices_if_empty)
 
-        # 시작하자마자 확인하면 창 뜨는 타이밍과 겹치니 살짝 늦춰서 백그라운드 확인.
-        # "자동 업데이트 확인"이 꺼져 있으면 시작할 때는 아예 확인하지 않는다
-        # (설정 탭의 수동 "업데이트 확인" 버튼은 이 설정과 무관하게 항상 동작한다).
+        # 창이 뜨는 타이밍과 겹치지 않게 늦춰서 확인한다. 꺼져 있어도 수동 "업데이트 확인"은 항상 동작한다.
         if config_manager.load_auto_update_check():
             self.root.after(2000, lambda: self._check_for_update(silent=True))
 
@@ -122,14 +122,29 @@ class HSSwitchApp:
         if not self.playback_devices and not self.recording_devices:
             self.refresh_devices()
 
-    def switch_device(self, playback_id, recording_id):
-        switch_device(playback_id, recording_id)
-        name = ""
-        if playback_id:
-            name = self._name_for(self.playback_devices, playback_id)
-        if recording_id:
-            name = self._name_for(self.recording_devices, recording_id)
-        self.status_var.set(f"전환됨: {name}")
+    def switch_device(self, playback_id, recording_id) -> list[str]:
+        failed = switch_device(playback_id, recording_id)
+        if failed:
+            # 팝업/단축키로 전환하면 메인 창이 숨겨져 있어 상태바가 안 보이므로 트레이 알림도 보낸다
+            message = f"{'/'.join(failed)} 장치를 바꾸지 못했어요. 장치가 켜져 있고 연결돼 있는지 확인해 주세요."
+            self.status_var.set(message)
+            self._notify(message)
+        else:
+            name = ""
+            if playback_id:
+                name = self._name_for(self.playback_devices, playback_id)
+            if recording_id:
+                name = self._name_for(self.recording_devices, recording_id)
+            self.status_var.set(f"전환됨: {name}")
+        self._refresh_profile_tree()
+        return failed
+
+    def _notify(self, message: str):
+        try:
+            if self.tray_icon:
+                self.tray_icon.notify(message, APP_TITLE)
+        except Exception:
+            pass  # 알림 실패가 전환 동작을 막으면 안 된다
 
     def _name_for(self, devices, device_id):
         for d in devices:
@@ -256,16 +271,18 @@ class HSSwitchApp:
         )
 
     def _build_profile_tab(self, parent):
-        columns = ("name", "playback", "recording", "hotkey")
+        columns = ("name", "status", "playback", "recording", "hotkey")
         self.profile_tree = ttk.Treeview(parent, columns=columns, show="headings", height=10)
         self.profile_tree.heading("name", text="프로필 이름")
+        self.profile_tree.heading("status", text="상태")
         self.profile_tree.heading("playback", text="재생 장치")
         self.profile_tree.heading("recording", text="녹음 장치")
         self.profile_tree.heading("hotkey", text="단축키")
         self.profile_tree.column("name", width=100)
-        self.profile_tree.column("playback", width=140)
-        self.profile_tree.column("recording", width=140)
-        self.profile_tree.column("hotkey", width=90)
+        self.profile_tree.column("status", width=60)
+        self.profile_tree.column("playback", width=170)
+        self.profile_tree.column("recording", width=170)
+        self.profile_tree.column("hotkey", width=80)
         self.profile_tree.pack(fill="both", expand=True, padx=10, pady=(12, 6))
         self.profile_tree.bind("<Double-1>", lambda e: self._on_apply_profile())
 
@@ -305,14 +322,14 @@ class HSSwitchApp:
             ("녹음", d) for d in self.recording_devices
         ]
 
-        self._alias_vars = {}
         for kind, device in all_devices:
             row = ttk.Frame(self.alias_container)
             row.pack(fill="x", pady=3)
-            ttk.Label(row, text=f"[{kind}] {device.name}", width=38, anchor="w").pack(side="left")
+            ttk.Label(
+                row, text=f"[{kind}] {device.name}", width=48, wraplength=340, anchor="w"
+            ).pack(side="left")
             var = tk.StringVar(value=aliases.get(device.id, ""))
-            self._alias_vars[device.id] = var
-            ttk.Entry(row, textvariable=var, width=20).pack(side="left", padx=(6, 6))
+            ttk.Entry(row, textvariable=var, width=16).pack(side="left", padx=(6, 6))
             ttk.Button(
                 row, text="저장", command=lambda dev=device, v=var: self._save_alias(dev, v)
             ).pack(side="left")
@@ -332,15 +349,22 @@ class HSSwitchApp:
 
         self.playback_combo["values"] = [label(d) for d in self.playback_devices]
         self.recording_combo["values"] = [label(d) for d in self.recording_devices]
-        if self.playback_devices:
-            self.playback_combo.current(0)
-        if self.recording_devices:
-            self.recording_combo.current(0)
+        # 콤보에는 목록 첫 항목이 아니라 지금 쓰고 있는 기본 장치를 선택해 둔다
+        for combo, devices, default_id in (
+            (self.playback_combo, self.playback_devices, audio_devices.get_default_playback_id()),
+            (self.recording_combo, self.recording_devices, audio_devices.get_default_recording_id()),
+        ):
+            ids = [d.id for d in devices]
+            if default_id in ids:
+                combo.current(ids.index(default_id))
+            elif devices:
+                combo.current(0)
         self.status_var.set(
             f"장치 {len(self.playback_devices)}개(재생) / {len(self.recording_devices)}개(녹음) 발견"
         )
         if hasattr(self, "alias_container"):
             self._refresh_alias_tab()
+        self._refresh_profile_tree()
 
     def _on_switch_playback(self):
         idx = self.playback_combo.current()
@@ -360,17 +384,23 @@ class HSSwitchApp:
     def _refresh_profile_tree(self):
         for row in self.profile_tree.get_children():
             self.profile_tree.delete(row)
-        for p in self.profiles:
+        default_playback = audio_devices.get_default_playback_id()
+        default_recording = audio_devices.get_default_recording_id()
+        active_idx = config_manager.find_active_profile(self.profiles, default_playback, default_recording)
+        for i, p in enumerate(self.profiles):
             self.profile_tree.insert(
                 "",
                 "end",
                 values=(
                     p.get("name", ""),
-                    p.get("playback_name", "-"),
-                    p.get("recording_name", "-"),
-                    p.get("hotkey", "-"),
+                    "● 사용 중" if i == active_idx else "",
+                    p.get("playback_name") or "-",
+                    p.get("recording_name") or "-",
+                    p.get("hotkey") or "-",
                 ),
             )
+        active = self.profiles[active_idx] if active_idx is not None else None
+        self._update_tray(active, default_playback, default_recording)
 
     def _selected_profile_index(self):
         sel = self.profile_tree.selection()
@@ -388,15 +418,16 @@ class HSSwitchApp:
         if not (0 <= idx < len(self.profiles)):
             return
         p = self.profiles[idx]
-        self.switch_device(playback_id=p.get("playback_id"), recording_id=p.get("recording_id"))
-        self.status_var.set(f"프로필 적용됨: {p.get('name')}")
+        config_manager.set_last_profile(p.get("name"))  # 장치 조합이 같은 프로필 중 "사용 중"을 하나로 정하는 기준
+        failed = self.switch_device(playback_id=p.get("playback_id"), recording_id=p.get("recording_id"))
+        if not failed:
+            self.status_var.set(f"프로필 적용됨: {p.get('name')}")
 
     def _on_add_profile(self):
         self._open_profile_editor()
 
     def _on_quick_add_profile(self):
-        """지금 실제로 쓰고 있는 재생/녹음 장치를 그대로 채운 채로 추가 창을 연다.
-        드롭다운에서 장치를 직접 고를 필요 없이 이름만 입력하면 끝."""
+        """지금 쓰는 재생/녹음 장치를 미리 채운 추가 창을 연다(이름만 입력하면 됨)."""
         current_playback_id = audio_devices.get_default_playback_id()
         current_recording_id = audio_devices.get_default_recording_id()
         self._open_profile_editor(
@@ -433,25 +464,91 @@ class HSSwitchApp:
         editor.title("프로필 편집" if edit_index is not None else "프로필 추가")
         editor.transient(self.root)
         editor.grab_set()
-        self._center_window(editor, 360, 320)
+        self._center_window(editor, 380, 500)
 
         existing = self.profiles[edit_index] if edit_index is not None else {}
 
-        name_entry_row = ttk.Label(editor, text="이름")
-        name_entry_row.pack(anchor="w", padx=12, pady=(12, 0))
+        ttk.Label(editor, text="이름").pack(anchor="w", padx=12, pady=(12, 0))
         name_var = tk.StringVar(value=existing.get("name", ""))
         name_entry = ttk.Entry(editor, textvariable=name_var)
         name_entry.pack(fill="x", padx=12)
         if prefill_playback_id or prefill_recording_id:
-            # 빠른 추가: 이름만 바로 입력할 수 있도록 포커스를 준다.
+            # 빠른 추가: 이름을 바로 입력할 수 있게 포커스를 준다
             editor.after(50, lambda: (name_entry.focus_set(), name_entry.select_range(0, "end")))
 
         ttk.Label(editor, text="아이콘").pack(anchor="w", padx=12, pady=(12, 0))
-        icon_var = tk.StringVar(value=existing.get("icon", "default"))
+        # 저장 값은 영문 키("headset" 등), 화면에는 한글 이름을 보여준다
+        icon_labels = tray_popup_web.PROFILE_ICON_LABELS
+        icon_var = tk.StringVar(value=icon_labels.get(existing.get("icon"), icon_labels["default"]))
         icon_combo = ttk.Combobox(
-            editor, textvariable=icon_var, state="readonly", values=PROFILE_ICONS
+            editor, textvariable=icon_var, state="readonly", values=list(icon_labels.values())
         )
         icon_combo.pack(fill="x", padx=12)
+
+        # 새로 고른 이미지는 저장을 누를 때까지 메모리에만 둔다(취소해도 파일이 남지 않게)
+        icon_state = {"name": existing.get("icon_image"), "new_image": None}
+        icon_row = ttk.Frame(editor)
+        icon_row.pack(fill="x", padx=12, pady=(8, 0))
+        preview_big = ttk.Label(icon_row)
+        preview_big.pack(side="left")
+        preview_small = ttk.Label(icon_row)  # 트레이에서 실제로 보일 16px 크기
+        preview_small.pack(side="left", padx=(8, 12))
+
+        def refresh_preview():
+            kind = next((k for k, v in icon_labels.items() if v == icon_var.get()), "default")
+            img = (
+                icon_state["new_image"]
+                or icon_store.load_icon_image(icon_state["name"])
+                or icon_art.draw_profile_icon(kind, 64)
+            )
+            for label, size in ((preview_big, 40), (preview_small, 16)):
+                label.image = ImageTk.PhotoImage(img.resize((size, size)))  # 참조를 붙들어 둬야 사라지지 않는다
+                label.configure(image=label.image)
+
+        def on_pick_file():
+            path = filedialog.askopenfilename(
+                parent=editor, filetypes=[("이미지", "*.png *.jpg *.jpeg *.bmp *.gif *.ico")]
+            )
+            if not path:
+                return
+            try:
+                icon_state["new_image"] = icon_store.open_image_file(path)
+            except Exception:
+                messagebox.showwarning(APP_TITLE, "이미지를 열 수 없어요. PNG나 JPG 파일을 골라 주세요.", parent=editor)
+                return
+            refresh_preview()
+
+        def on_paste_image():
+            img = icon_store.get_clipboard_image()
+            if img is None:
+                messagebox.showinfo(
+                    APP_TITLE, "클립보드에 이미지가 없어요. 이미지를 복사한 뒤 다시 눌러 주세요.", parent=editor
+                )
+                return
+            icon_state["new_image"] = img
+            refresh_preview()
+
+        def on_clear_image():
+            icon_state["name"] = None
+            icon_state["new_image"] = None
+            refresh_preview()
+
+        ttk.Button(icon_row, text="이미지 선택", command=on_pick_file).pack(side="left")
+        ttk.Button(icon_row, text="붙여넣기", command=on_paste_image).pack(side="left", padx=4)
+        ttk.Button(icon_row, text="지우기", command=on_clear_image).pack(side="left")
+        ttk.Label(
+            editor,
+            text="왼쪽은 확대 미리보기, 오른쪽 작은 그림은 작업 표시줄 트레이에서 실제로 보이는 크기예요. "
+                 "팝업의 프로필 타일에도 쓰여요.",
+            wraplength=340, foreground="gray",
+        ).pack(anchor="w", padx=12)
+        ttk.Label(
+            editor,
+            text="단순한 모양이 가장 또렷해요. 투명 배경은 붙여넣기에서는 유지되지 않으니 PNG 파일로 선택하세요.",
+            wraplength=340, foreground="gray",
+        ).pack(anchor="w", padx=12, pady=(4, 0))
+        icon_combo.bind("<<ComboboxSelected>>", lambda e: on_clear_image())  # 기본 아이콘을 고르면 내 이미지는 해제
+        refresh_preview()
 
         playback_label_row = ttk.Frame(editor)
         playback_label_row.pack(fill="x", padx=12, pady=(12, 0))
@@ -509,16 +606,24 @@ class HSSwitchApp:
             playback_dev = self.playback_devices[p_idx] if p_idx >= 0 else None
             recording_dev = self.recording_devices[r_idx] if r_idx >= 0 else None
             hotkey = hotkey_var.get().strip() or None
+            error = self.hotkey_error(hotkey)
+            if error:
+                messagebox.showwarning(APP_TITLE, error)
+                return
 
             profile = {
                 "name": name,
-                "icon": icon_var.get() or "default",
+                "icon": next((k for k, v in icon_labels.items() if v == icon_var.get()), "default"),
                 "playback_id": playback_dev.id if playback_dev else None,
                 "playback_name": playback_combo.get() if playback_dev else None,
                 "recording_id": recording_dev.id if recording_dev else None,
                 "recording_name": recording_combo.get() if recording_dev else None,
                 "hotkey": hotkey,
             }
+            if icon_state["new_image"] is not None:
+                profile["icon_image"] = icon_store.save_icon_image(icon_state["new_image"])
+            elif icon_state["name"]:
+                profile["icon_image"] = icon_state["name"]
 
             if edit_index is not None:
                 config_manager.update_profile(edit_index, profile)
@@ -542,11 +647,22 @@ class HSSwitchApp:
         win.geometry(f"{width}x{height}+{x}+{y}")
 
     # ---------- 글로벌 단축키 ----------
+    @staticmethod
+    def hotkey_error(hotkey: str | None) -> str | None:
+        """단축키 형식이 틀리면 안내 문구를, 올바르거나 비어 있으면 None을 돌려준다."""
+        if not hotkey:
+            return None
+        try:
+            keyboard.parse_hotkey(hotkey)
+        except Exception:
+            return "단축키 형식이 올바르지 않아요. 예: ctrl+alt+1"
+        return None
+
     def _register_hotkeys(self):
         try:
             keyboard.unhook_all_hotkeys()
         except AttributeError:
-            pass  # 첫 실행 등 리스너 초기화 전 상태, 무시해도 안전
+            pass  # 키보드 리스너가 아직 초기화되기 전
         for idx, p in enumerate(self.profiles):
             hotkey = p.get("hotkey")
             if not hotkey:
@@ -563,16 +679,13 @@ class HSSwitchApp:
         return callback
 
     # ---------- 트레이 아이콘 ----------
-    def _make_tray_image(self):
-        return icon_art.draw_headset_mic(64)
-
     def _start_tray_thread(self):
         show_popup_item = pystray.MenuItem("빠른 전환", self._open_tray_popup, default=True, visible=False)
         open_item = pystray.MenuItem("열기", lambda: self.root.after(0, self.show_from_tray))
         quit_item = pystray.MenuItem("종료", lambda: self.root.after(0, self.quit_app))
         menu = pystray.Menu(show_popup_item, open_item, pystray.Menu.SEPARATOR, quit_item)
 
-        self.tray_icon = pystray.Icon("hsswitch", self._make_tray_image(), APP_TITLE, menu)
+        self.tray_icon = pystray.Icon("hsswitch", icon_art.draw_headset_mic(64), APP_TITLE, menu)
 
         def run_tray(retry=True):
             try:
@@ -580,16 +693,46 @@ class HSSwitchApp:
             except Exception:
                 pass
             try:
-                self.tray_icon.run()
+                self.tray_icon.run(setup=self._on_tray_ready)
             except Exception:
                 self._log_error("tray_icon.run() failed")
                 if retry:
-                    # 업데이트 직후 재시작처럼 트레이 등록 타이밍이 꼬였을 수 있으니 한 번만 재시도
-                    import time
+                    # 업데이트 직후 재시작처럼 트레이 등록 타이밍이 꼬일 수 있어 한 번만 재시도
                     time.sleep(2)
                     run_tray(retry=False)
 
         threading.Thread(target=run_tray, daemon=True).start()
+
+    def _on_tray_ready(self, icon):
+        """트레이 스레드에서 호출된다. pystray는 아이콘이 표시된 뒤에만 아이콘 변경을 반영하므로
+        표시된 다음에 현재 상태(사용 중인 프로필의 아이콘/툴팁)를 한 번 맞춘다."""
+        icon.visible = True  # setup을 직접 넘기면 pystray가 표시해 주지 않는다
+        self._tray_key = None
+        self.root.after(0, self._refresh_profile_tree)
+
+    def _update_tray(self, active, default_playback, default_recording):
+        """트레이 아이콘/툴팁을 지금 상태로 맞춘다. 사용 중인 프로필이 없으면 기본 아이콘과 기본 장치 이름."""
+        if not self.tray_icon:
+            return
+        if active:
+            title = f"{APP_TITLE} · 사용 중: {active.get('name')}"
+            icon_key = (active.get("icon"), active.get("icon_image"))
+        else:
+            icon_key = (None, None)
+            names = {
+                d.id: config_manager.get_display_name(d.id, d.name)
+                for d in self.playback_devices + self.recording_devices
+            }
+            title = (
+                f"{APP_TITLE} · 재생: {names.get(default_playback, '-')}"
+                f" / 녹음: {names.get(default_recording, '-')}"
+            )
+        title = title[:127]  # Windows 트레이 툴팁은 127자까지
+        if (title, icon_key) != self._tray_key:
+            self._tray_key = (title, icon_key)
+            image = icon_store.load_icon_image(icon_key[1]) or icon_art.draw_profile_icon(icon_key[0], 64)
+            self.tray_icon.icon = image
+            self.tray_icon.title = title
 
     @staticmethod
     def _log_error(message: str):
@@ -634,10 +777,9 @@ def main():
     holder = {}
 
     def tk_thread():
-        # Tk()는 자신을 생성한 스레드에서만 mainloop을 돌릴 수 있다.
-        # 초기화 중 어디서든 예외가 나면 ready.set()이 절대 호출되지 않아서
-        # main()이 ready.wait()에서 영원히 멈추고(=프로그램이 아무 반응 없이 "실행 안 됨")
-        # 트레이 아이콘도 안 뜨는 상태가 되므로, 무슨 일이 있어도 ready는 반드시 세팅한다.
+        # Tk()는 만든 스레드에서만 mainloop을 돌릴 수 있다.
+        # 초기화 중 예외가 나도 ready는 반드시 세팅해야 한다. 아니면 main()이 ready.wait()에서
+        # 영원히 멈춰 앱이 아무 반응 없이 실행 안 된 것처럼 보인다.
         try:
             comtypes.CoInitialize()
             root = tk.Tk()

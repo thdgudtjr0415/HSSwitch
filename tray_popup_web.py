@@ -1,7 +1,4 @@
-"""
-트레이 아이콘 클릭 시 뜨는 팝업을 pywebview로 렌더링.
-클릭할 때마다 새 창을 만들고, 닫힐 때 완전히 폐기한다.
-"""
+"""트레이 아이콘 클릭 시 뜨는 팝업(pywebview). 클릭할 때마다 새 창을 만들고 닫히면 폐기한다."""
 
 import ctypes
 
@@ -9,6 +6,7 @@ import webview
 
 import audio_devices
 import config_manager
+import icon_store
 import theme_manager
 import volume_control
 
@@ -54,7 +52,7 @@ ICONS = {
     ),
 }
 
-PROFILE_ICON_KEYS = ("default", "headset", "speaker", "mic")
+PROFILE_ICON_LABELS = {"default": "기본", "headset": "헤드셋", "speaker": "스피커", "mic": "마이크"}
 
 
 def _esc(s):
@@ -62,11 +60,11 @@ def _esc(s):
 
 
 class Api:
-    """JS(pywebview.api.*)에서 호출하는 파이썬 쪽 진입점. 실제 처리는 tkinter 메인 스레드로 위임."""
+    """JS(pywebview.api.*)에서 호출하는 파이썬 쪽 진입점. 전환/설정 변경은 tkinter 스레드(root.after)로 넘긴다."""
 
     def __init__(self, app, holder):
         self.app = app
-        self.holder = holder  # {"window": <이 팝업 전용 webview.Window 인스턴스>}
+        self.holder = holder  # {"window": 이 팝업의 webview.Window}
 
     def switch_playback(self, device_id):
         self.app.root.after(0, lambda: self.app.switch_device(playback_id=device_id, recording_id=None))
@@ -81,23 +79,25 @@ class Api:
         self._close()
 
     def get_main_view(self):
-        """프로필 추가 폼에서 '뒤로'/저장 완료 시 메인 화면 HTML을 다시 만들어 돌려준다.
-        팝업이 떠 있는 동안 창 크기/위치가 갑자기 바뀌면 화면에서 튀어 보이므로,
-        처음 열었을 때 계산된 크기/위치를 그대로 유지하고 다시 계산하지 않는다."""
+        """폼에서 '뒤로'/저장 후 메인 화면 HTML을 다시 만든다.
+        창이 떠 있는 동안 크기/위치를 다시 계산하면 화면이 튀므로, 처음 열 때 계산한 값을 그대로 쓴다."""
         return _build_main_view_html(self.app)
 
     def get_add_form(self):
-        """'+ 추가' 타일을 눌렀을 때 지금 쓰고 있는 재생/녹음 장치를 미리 채운 입력 폼 HTML."""
+        """'+ 추가' 폼 HTML (지금 쓰는 장치가 미리 선택됨)."""
         return _build_profile_form_html(self.app)
 
     def get_edit_form(self, idx):
-        """프로필 우클릭 -> 수정을 눌렀을 때, 그 프로필의 저장된 값을 채운 입력 폼 HTML."""
+        """프로필 수정 폼 HTML (저장된 값이 채워짐)."""
         return _build_profile_form_html(self.app, edit_index=int(idx))
 
     def save_new_profile(self, name, icon, playback_id, recording_id, hotkey):
         name = (name or "").strip()
         if not name:
             return {"ok": False, "error": "이름을 입력하세요."}
+        error = self.app.hotkey_error((hotkey or "").strip())
+        if error:
+            return {"ok": False, "error": error}
 
         profile = self._build_profile_dict(name, icon, playback_id, recording_id, hotkey)
         config_manager.add_profile(profile)
@@ -108,8 +108,17 @@ class Api:
         name = (name or "").strip()
         if not name:
             return {"ok": False, "error": "이름을 입력하세요."}
+        error = self.app.hotkey_error((hotkey or "").strip())
+        if error:
+            return {"ok": False, "error": error}
 
         profile = self._build_profile_dict(name, icon, playback_id, recording_id, hotkey)
+        if icon == "custom":  # 폼에서 "내 이미지"를 그대로 둔 경우: 기존 이미지 유지
+            profiles = config_manager.load_profiles()
+            old = profiles[int(idx)] if 0 <= int(idx) < len(profiles) else {}
+            profile["icon"] = old.get("icon", "default")
+            if old.get("icon_image"):
+                profile["icon_image"] = old["icon_image"]
         config_manager.update_profile(int(idx), profile)
         self._refresh_app()
         return {"ok": True}
@@ -124,7 +133,7 @@ class Api:
         recording_dev = next((d for d in self.app.recording_devices if d.id == recording_id), None)
         return {
             "name": name,
-            "icon": icon if icon in PROFILE_ICON_KEYS else "default",
+            "icon": icon if icon in PROFILE_ICON_LABELS else "default",
             "playback_id": playback_dev.id if playback_dev else None,
             "playback_name": config_manager.get_display_name(playback_dev.id, playback_dev.name)
             if playback_dev else None,
@@ -138,6 +147,7 @@ class Api:
         def _refresh():
             self.app.profiles = config_manager.load_profiles()
             self.app._register_hotkeys()
+            self.app._refresh_profile_tree()  # 메인 창 목록, 트레이 아이콘/툴팁도 함께 갱신
 
         self.app.root.after(0, _refresh)
 
@@ -214,14 +224,29 @@ def _build_main_view_html(app) -> str:
     default_playback = audio_devices.get_default_playback_id()
     default_recording = audio_devices.get_default_recording_id()
 
+    playback_ids = {d.id for d in app.playback_devices}
+    recording_ids = {d.id for d in app.recording_devices}
+
+    active_idx = config_manager.find_active_profile(profiles, default_playback, default_recording)
+
     profile_tiles = ""
     for idx, prof in enumerate(profiles):
         icon_kind = prof.get("icon") if prof.get("icon") in ("headset", "speaker", "mic") else "default"
+        p_id, r_id = prof.get("playback_id"), prof.get("recording_id")
+        if idx == active_idx:
+            state_cls, state_html = "active", '<span class="tile-state">사용 중</span>'
+        elif (p_id and p_id not in playback_ids) or (r_id and r_id not in recording_ids):
+            state_cls, state_html = "offline", '<span class="tile-state">장치 없음</span>'
+        else:
+            state_cls, state_html = "", ""
+        image_uri = icon_store.icon_data_uri(prof.get("icon_image"))
+        icon_html = f'<img class="tile-img" src="{image_uri}" alt="">' if image_uri else ICONS[icon_kind]
         profile_tiles += f'''
-        <div class="tile" onclick="pywebview.api.apply_profile({idx})"
+        <div class="tile {state_cls}" onclick="pywebview.api.apply_profile({idx})"
              oncontextmenu="hswOnProfileContextMenu(event, {idx})">
-          <span class="tile-icon">{ICONS[icon_kind]}</span>
+          <span class="tile-icon">{icon_html}</span>
           <span class="tile-label">{_esc(prof.get("name", ""))}</span>
+          {state_html}
         </div>'''
     profile_tiles += f'''
         <div class="tile add" onclick="hswShowAdd()">
@@ -249,9 +274,7 @@ def _build_main_view_html(app) -> str:
 
 
 def _build_profile_form_html(app, edit_index: int | None = None) -> str:
-    """'+ 추가' 또는 프로필 우클릭 -> 수정을 눌렀을 때 보여줄 입력 폼.
-    추가 모드에서는 지금 실제로 쓰고 있는 재생/녹음 장치를 미리 선택해두고,
-    수정 모드에서는 그 프로필에 저장돼 있던 값을 채운다."""
+    """프로필 추가/수정 폼. 추가는 지금 쓰는 장치를 미리 선택하고, 수정은 저장된 값을 채운다."""
     profiles = config_manager.load_profiles()
     existing = (
         profiles[edit_index] if edit_index is not None and 0 <= edit_index < len(profiles) else None
@@ -283,9 +306,13 @@ def _build_profile_form_html(app, edit_index: int | None = None) -> str:
         if selected_recording_id and selected_recording_id == default_recording else ""
     )
     existing_icon = existing.get("icon", "default") if existing else "default"
-    icon_options = "".join(
-        f'<option value="{k}" {"selected" if existing_icon == k else ""}>{k}</option>'
-        for k in PROFILE_ICON_KEYS
+    # 내 이미지가 있는 프로필은 "내 이미지"가 기본 선택이고, 기본 아이콘을 골라 저장하면 이미지가 해제된다
+    has_image = bool(existing and icon_store.load_icon_image(existing.get("icon_image")))
+    icon_options = '<option value="custom" selected>내 이미지</option>' if has_image else ""
+    icon_options += "".join(
+        f'<option value="{k}" {"selected" if existing_icon == k and not has_image else ""}>'
+        f'{PROFILE_ICON_LABELS[k]}</option>'
+        for k in PROFILE_ICON_LABELS
     )
 
     title = "프로필 수정" if existing is not None else "프로필 추가"
@@ -317,7 +344,7 @@ def _build_profile_form_html(app, edit_index: int | None = None) -> str:
       </div>
       <div class="field">
         <div class="field-label">단축키 (예: ctrl+alt+1, 비워두면 없음)</div>
-        <input type="text" id="add-hotkey" class="text-input" placeholder="" value="{hotkey_value}">
+        <input type="text" id="add-hotkey" class="text-input" value="{hotkey_value}">
       </div>
       <div class="save-row">
         <button class="save-btn" onclick="hswSaveProfile()">저장</button>
@@ -354,8 +381,13 @@ def _build_html(app) -> str:
   .tile:hover {{ background: {p['card_hover']}; }}
   .tile.add {{ color: {p['fg_muted']}; }}
   .tile-icon svg {{ width: 20px; height: 20px; color: {p['fg']}; display: block; }}
+  .tile-img {{ width: 22px; height: 22px; display: block; }}
   .tile.add .tile-icon svg {{ color: {p['fg_muted']}; }}
   .tile-label {{ font-size: 10.5px; }}
+  .tile-state {{ font-size: 9.5px; color: {p['fg_muted']}; margin-top: -3px; }}
+  .tile.active {{ box-shadow: inset 0 0 0 1.5px {p['accent']}; }}
+  .tile.active .tile-state {{ color: {p['accent']}; font-weight: 600; }}
+  .tile.offline .tile-icon, .tile.offline .tile-label {{ opacity: 0.55; }}
   .empty-note {{ font-size: 11px; color: {p['fg_muted']}; margin-top: 6px; }}
   .card {{ background: {p['card_bg']}; border-radius: 14px; overflow: hidden; }}
   .row {{ display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; }}
@@ -635,11 +667,8 @@ _current_popup = {"window": None}
 
 
 def init_window(app):
-    """
-    프로그램 시작 시 한 번만 호출 (진짜 메인 스레드에서). pywebview 이벤트 루프를
-    계속 살려두기 위한 보이지 않는 keep-alive 창을 만든다. 실제 팝업은
-    show_tray_popup_web()에서 매번 새로 만들고 버린다.
-    """
+    """시작 시 한 번, 진짜 메인 스레드에서 호출한다. 이벤트 루프를 살려 두는 숨은 창을 만든다
+    (실제 팝업은 show_tray_popup_web()이 매번 새로 만들고 버린다)."""
     global _keepalive_window
     _keepalive_window = webview.create_window(
         "HSSwitch (background)", html="<html></html>", width=1, height=1, hidden=True,
@@ -651,14 +680,11 @@ def run_event_loop():
     webview.start()
 
 
-# pywebview 팝업 창의 내부 타이틀. 프레임리스라 화면에 보이진 않지만,
-# 메인 tkinter 창(APP_TITLE="HSSwitch")과 같은 문자열을 쓰면 FindWindowW가
-# 숨겨진 메인 창을 잘못 집을 수 있어서 반드시 고유한 값을 써야 한다.
+# 팝업 창 제목. FindWindowW로 팝업을 찾으므로 메인 창 제목("HSSwitch")과 달라야 한다
 POPUP_WINDOW_TITLE = "HSSwitchPopup"
 
-# 백그라운드 스레드(트레이 아이콘 클릭 콜백)에서 SetForegroundWindow를 호출하면
-# Windows가 기본적으로 막기 때문에, ALT 키를 살짝 눌렀다 떼는 척해서 우회한다.
-# (포그라운드 잠금을 우회하는 잘 알려진 트릭)
+# 백그라운드 스레드(트레이 클릭 콜백)의 SetForegroundWindow는 Windows가 막으므로
+# ALT 키를 눌렀다 떼는 척해서 포그라운드 잠금을 우회한다
 VK_MENU = 0x12
 KEYEVENTF_KEYUP = 0x0002
 SWP_NOMOVE = 0x0002
@@ -683,20 +709,14 @@ def _apply_rounded_corners(width, height):
 
 
 def _force_foreground():
-    """
-    다른 always-on-top 창(예: 브라우저 PiP)에 팝업이 가려지거나, 백그라운드
-    스레드에서 만든 창이라 포커스를 못 받는 경우를 방지하기 위해 강제로
-    맨 앞으로 올리고 포커스를 가져온다.
-    """
+    """다른 always-on-top 창(예: 브라우저 PiP)에 가려지거나 포커스를 못 받는 경우를 막으려고 강제로 맨 앞으로 올린다."""
     try:
         hwnd = _find_popup_hwnd()
         if not hwnd:
             return
         user32 = ctypes.windll.user32
-        # topmost 재적용 (다른 topmost 창에 밀린 z-order 복구)
-        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)  # 밀린 z-order 복구
         user32.BringWindowToTop(hwnd)
-        # 포그라운드 잠금 우회
         user32.keybd_event(VK_MENU, 0, 0, 0)
         user32.SetForegroundWindow(hwnd)
         user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)

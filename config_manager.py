@@ -1,13 +1,15 @@
 """
-HSSwitch 설정 저장/불러오기.
+HSSwitch 설정(%APPDATA%\\HSSwitch\\config.json) 저장/불러오기.
 
-하나의 JSON 파일에 다음 두 가지를 함께 저장한다:
 - profiles: 재생+녹음 장치 조합 프로필 목록
-- aliases: 장치 ID -> 별칭(alias) 매핑 (Windows가 붙인 장치 이름 대신 표시)
+- aliases: 장치 ID -> 별칭 (Windows 장치 이름 대신 앱 안에서만 표시)
+- theme, auto_update_check, last_profile: 팝업 테마, 시작 시 업데이트 확인 여부, 마지막으로 적용한 프로필 이름
 """
 
 import json
 import os
+
+import icon_store
 
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HSSwitch")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
@@ -61,15 +63,40 @@ def add_profile(profile: dict):
 def update_profile(index: int, profile: dict):
     profiles = load_profiles()
     if 0 <= index < len(profiles):
+        old_image = profiles[index].get("icon_image")
         profiles[index] = profile
         save_profiles(profiles)
+        if old_image != profile.get("icon_image"):
+            icon_store.delete_icon_image(old_image)  # 바뀌거나 지워진 이미지는 파일도 정리
 
 
 def delete_profile(index: int):
     profiles = load_profiles()
     if 0 <= index < len(profiles):
-        profiles.pop(index)
+        removed = profiles.pop(index)
         save_profiles(profiles)
+        icon_store.delete_icon_image(removed.get("icon_image"))
+
+
+def find_active_profile(profiles: list[dict], playback_id: str | None, recording_id: str | None) -> int | None:
+    """지금 "사용 중"인 프로필의 번호를 하나만 돌려준다(없으면 None).
+    프로필에 지정된 장치가 모두 지금 기본 장치이면 해당한다. 장치 조합이 같은 프로필이 여럿이면
+    장치 상태로는 구별할 수 없으니 마지막으로 적용한 프로필을, 아니면 목록에서 가장 앞의 것을 고른다."""
+    matches = []
+    for i, p in enumerate(profiles):
+        p_id, r_id = p.get("playback_id"), p.get("recording_id")
+        if (p_id or r_id) and (not p_id or p_id == playback_id) and (not r_id or r_id == recording_id):
+            matches.append(i)
+    if not matches:
+        return None
+    last = load_config().get("last_profile")
+    return next((i for i in matches if profiles[i].get("name") == last), matches[0])
+
+
+def set_last_profile(name: str):
+    config = load_config()
+    config["last_profile"] = name
+    save_config(config)
 
 
 # ---------- 장치 별칭 ----------
@@ -107,7 +134,7 @@ def set_theme(theme: str):
 
 # ---------- 자동 업데이트 알림 ----------
 def load_auto_update_check() -> bool:
-    """True면 시작할 때 자동으로 새 버전을 확인해서 알림을 띄운다."""
+    """True면 시작할 때 자동으로 새 버전을 확인한다."""
     return bool(load_config().get("auto_update_check", True))
 
 

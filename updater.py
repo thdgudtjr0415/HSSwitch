@@ -1,36 +1,15 @@
 """
-HSSwitch 자동 업데이트 모듈.
-
-FanControl(Rem0o/FanControl.Releases)의 배포 방식을 참고했다:
-  - 저장소에 작은 JSON 매니페스트 파일 하나(version.json 등)를 올려두고
-  - 앱은 그 파일만 확인해서 새 버전 여부를 판단하고
-  - 실제 교체는 앱 본체가 아니라 별도의 업데이터가 담당한다.
-    (FanControl은 Updater.exe라는 별도 실행파일을 쓰지만,
-     우리는 별도 exe를 만들 필요 없이 임시 배치 스크립트로 같은 역할을 한다)
-
-빌드 방식이 --onefile -> --onedir(폴더 배포)로 바뀌면서, 배포/업데이트 단위도
-exe 파일 하나가 아니라 앱 폴더 전체(zip)로 바뀌었다. onefile은 실행할 때마다
-임시 폴더에 압축을 풀었다가 지우는데, 이 과정이 백신 실시간 검사와 자꾸 겹쳐서
-"Failed to load Python DLL" 류의 오류가 반복적으로 났다. onedir는 그 압축 해제
-과정 자체가 없어서 이 문제가 구조적으로 사라진다.
+HSSwitch 자동 업데이트.
 
 동작 순서:
-1. UPDATE_MANIFEST_URL 에서 JSON 하나를 받아온다.
-   기대 형식:
-     {
-       "version": "1.1.0",
-       "url": "https://.../HSSwitch.zip",   # 앱 폴더 전체를 압축한 zip
-       "md5": "27e4bef5ab961ddc93b2faf6ce6900d2",   # 선택. zip 파일의 md5. 있으면 검증한다.
-       "notes": "- 버그 수정\\n- 기능 추가"
-     }
-2. manifest의 version이 현재 실행 중인 버전(version.py)보다 높으면 사용자에게 확인 창을 띄운다.
-3. "예"를 누르면 새 zip을 임시 폴더에 내려받고(+ md5 있으면 검증), 그 자리에서 풀어놓는다.
-4. 배치 스크립트를 하나 생성해서 "현재 프로세스가 완전히 종료될 때까지 대기 ->
-   robocopy로 새 폴더 내용을 설치 폴더 위에 덮어쓰기 -> 재실행 -> 임시 파일 정리" 를 수행하게 한다.
-5. 배치 스크립트를 백그라운드로 띄우고, 앱은 정상 종료 절차(app.quit_app())를 밟는다.
+1. UPDATE_MANIFEST_URL(저장소의 version.json)을 받아온다. 형식:
+     {"version": "1.1.0", "url": "https://.../HSSwitch.zip", "md5": "(선택, 있으면 zip 검증)", "notes": "..."}
+2. version이 현재 버전(version.py)보다 높으면 확인 창을 띄운다.
+3. "예"면 zip을 임시 폴더에 받아(md5 검증) 풀고, 임시 배치 스크립트를 만든다.
+4. 배치는 이 프로세스가 끝날 때까지 기다렸다가 robocopy로 설치 폴더를 덮어쓰고 앱을 다시 실행한다.
+5. 앱은 정상 종료 절차(app.quit_app())를 밟는다.
 
-호스팅은 GitHub Releases를 쓴다. 새 버전 낼 때마다 dist\\HSSwitch.zip을 릴리즈에
-첨부하고, 저장소 루트의 version.json의 version/md5/notes를 갱신해서 push하면 된다.
+릴리즈할 때는 dist\\HSSwitch.zip을 GitHub Release에 첨부하고 version.json(version/md5/notes)을 갱신해 push한다.
 """
 
 import hashlib
@@ -59,12 +38,8 @@ def _parse_version(v: str):
 
 
 def check_for_update() -> dict | None:
-    """
-    네트워크 호출이 있으므로 반드시 백그라운드 스레드에서 호출할 것.
-    새 버전이 있으면 manifest dict를, 없거나 실패하면 None을 반환한다.
-    (URL 미설정/오프라인/서버 오류 등 어떤 이유로든 앱 실행에 지장을 주면 안 되므로
-    전부 조용히 삼킨다)
-    """
+    """새 버전이 있으면 manifest를, 없거나 실패하면 None을 반환한다. 네트워크를 쓰므로 백그라운드 스레드에서 호출할 것.
+    오프라인 등 어떤 실패도 앱 실행에 영향을 주면 안 되어 예외는 삼킨다."""
     if not UPDATE_MANIFEST_URL:
         return None
     try:
@@ -128,11 +103,8 @@ def _download_and_apply(app, manifest: dict):
 
     pid = os.getpid()
     batch_path = os.path.join(tempfile.gettempdir(), "hsswitch_update.bat")
-    # 현재 프로세스(pid)가 완전히 죽을 때까지 기다렸다가, robocopy로 새 폴더
-    # 내용을 설치 폴더 위에 통째로 덮어쓰고 재실행한다.
-    # 무한 대기를 방지하기 위해 최대 15초만 기다리고, 그래도 안 죽어있으면
-    # 강제 종료 후 진행한다. (좀비 프로세스가 파일을 잠그고 있으면 교체가
-    # 계속 실패하거나, 절반만 교체된 채로 새 인스턴스가 실행되는 걸 방지)
+    # 현재 프로세스가 끝날 때까지 최대 15초 기다리고, 그래도 살아 있으면 강제 종료한 뒤 교체한다
+    # (프로세스가 파일을 잡고 있으면 교체가 실패하거나 반쯤 교체된 채로 실행되기 때문)
     batch_content = f"""@echo off
 setlocal enabledelayedexpansion
 set count=0
@@ -157,10 +129,7 @@ start "" "{current_exe}"
 rmdir /s /q "{work_dir}" >nul 2>nul
 del "%~f0"
 """
-    # .bat 파일은 cmd.exe가 시스템 ANSI 코드페이지로 해석하므로, UTF-8로 쓰면
-    # (특히 한글 사용자 폴더 경로가 포함될 때) 깨진 바이트가 명령어로 잘못
-    # 실행될 수 있다. "mbcs"는 Windows의 활성 ANSI 코드페이지를 그대로 써서
-    # cmd.exe가 기대하는 인코딩과 일치시킨다.
+    # cmd.exe는 .bat을 ANSI 코드페이지로 읽으므로 UTF-8로 쓰면 한글 경로가 깨진다 -> "mbcs"
     with open(batch_path, "w", encoding="mbcs") as f:
         f.write(batch_content)
 
@@ -169,6 +138,4 @@ del "%~f0"
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
 
-    # 배치가 대기할 대상은 "이 프로세스가 완전히 죽는 것"이므로,
-    # 트레이 아이콘/단축키 정리까지 포함된 정상 종료 절차를 그대로 탄다.
-    app.quit_app()
+    app.quit_app()  # 배치가 이 프로세스의 종료를 기다리므로 트레이/단축키 정리까지 하는 정상 종료를 탄다

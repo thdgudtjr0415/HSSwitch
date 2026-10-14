@@ -103,6 +103,14 @@ being asked.
 
 ---
 
+## Skills to Use (HSSwitch)
+
+- **ponytail-review / ponytail-audit**: use to check for over-engineering. Ignore any suggestion to merge the tkinter / pywebview / pystray loops or to drop per-thread `CoInitialize()` — those are intentional (see threading constraints above).
+- **design-md-styles / frontend-design**: use for tray popup (`tray_popup_web.py`, `theme_manager.py`) UI work. Follow `docs/DESIGN.md` once it exists, so later edits keep one consistent style.
+- **computer-use**: use to actually open the tray popup and check it visually. Terminals/IDEs are click-only, so run shell commands via Bash/PowerShell instead.
+
+---
+
 ## Release Workflow (HSSwitch)
 
 **Version bump policy — don't bump on every fix.**
