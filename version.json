@@ -1,6 +1,6 @@
 {
-  "version": "1.2.1",
+  "version": "1.2.2",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "A11080404E6BE9DE3439D11EC2202FFA",
-  "notes": "- 팝업 아이콘 드롭다운에서 내 이미지를 지정할 수 있어요\n- 팝업 드롭다운 목록이 창 밖으로 벗어나지 않아요\n- 메인 창 첫 화면이 프로필이에요\n- 장치 별칭이 자동으로 저장돼요"
+  "md5": "CD0740F7F4796EF3010692DEF9CF5E1F",
+  "notes": "- Windows 업데이트 등으로 장치 ID가 바뀌어도 프로필이 자동으로 복구돼요\n- 프로필에 장치의 원래 이름도 함께 저장해요"
 }
