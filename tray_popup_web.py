@@ -149,6 +149,8 @@ class Api:
             "recording_id": recording_dev.id if recording_dev else None,
             "recording_name": config_manager.get_display_name(recording_dev.id, recording_dev.name)
             if recording_dev else None,
+            "playback_device_name": playback_dev.name if playback_dev else None,
+            "recording_device_name": recording_dev.name if recording_dev else None,
             "hotkey": (hotkey or "").strip() or None,
         }
 

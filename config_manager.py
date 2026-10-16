@@ -78,6 +78,32 @@ def delete_profile(index: int):
         icon_store.delete_icon_image(removed.get("icon_image"))
 
 
+def relink_profiles(profiles: list[dict], playback_devices: list, recording_devices: list) -> bool:
+    """저장된 장치 ID가 목록에서 사라졌으면(Windows 업데이트·드라이버 재설치로 ID가 바뀌는 경우) 같은 이름의
+    장치를 찾아 ID를 새로 잇는다. 이름이 같은 장치가 정확히 하나일 때만 잇고, 바뀐 게 있으면 True.
+    ID가 그대로인 프로필에는 나중을 위해 장치 원래 이름을 채워 둔다."""
+    changed = False
+    for profile in profiles:
+        for kind, devices in (("playback", playback_devices), ("recording", recording_devices)):
+            id_key, device_name_key = f"{kind}_id", f"{kind}_device_name"
+            device_id = profile.get(id_key)
+            if not device_id:
+                continue
+            current = next((d for d in devices if d.id == device_id), None)
+            if current:
+                if profile.get(device_name_key) != current.name:
+                    profile[device_name_key] = current.name
+                    changed = True
+                continue
+            names = {profile.get(device_name_key), profile.get(f"{kind}_name")}
+            found = [d for d in devices if d.name in names or get_display_name(d.id, d.name) in names]
+            if len(found) == 1:
+                profile[id_key] = found[0].id
+                profile[device_name_key] = found[0].name
+                changed = True
+    return changed
+
+
 def find_active_profile(profiles: list[dict], playback_id: str | None, recording_id: str | None) -> int | None:
     """지금 "사용 중"인 프로필의 번호를 하나만 돌려준다(없으면 None).
     프로필에 지정된 장치가 모두 지금 기본 장치이면 해당한다. 장치 조합이 같은 프로필이 여럿이면

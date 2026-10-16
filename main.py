@@ -353,6 +353,11 @@ class HSSwitchApp:
         self.playback_devices = audio_devices.get_playback_devices()
         self.recording_devices = audio_devices.get_recording_devices()
 
+        profiles = config_manager.load_profiles()
+        if config_manager.relink_profiles(profiles, self.playback_devices, self.recording_devices):
+            config_manager.save_profiles(profiles)
+            self.profiles = profiles
+
         def label(d):
             return config_manager.get_display_name(d.id, d.name)
 
@@ -636,6 +641,8 @@ class HSSwitchApp:
                 "playback_name": playback_combo.get() if playback_dev else None,
                 "recording_id": recording_dev.id if recording_dev else None,
                 "recording_name": recording_combo.get() if recording_dev else None,
+                "playback_device_name": playback_dev.name if playback_dev else None,
+                "recording_device_name": recording_dev.name if recording_dev else None,
                 "hotkey": hotkey,
             }
             if icon_state["new_image"] is not None:
