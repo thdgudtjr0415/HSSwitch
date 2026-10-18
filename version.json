@@ -1,6 +1,6 @@
 {
-  "version": "1.2.2",
+  "version": "1.2.3",
   "url": "https://github.com/thdgudtjr0415/HSSwitch/releases/latest/download/HSSwitch.zip",
-  "md5": "CD0740F7F4796EF3010692DEF9CF5E1F",
-  "notes": "- Windows 업데이트 등으로 장치 ID가 바뀌어도 프로필이 자동으로 복구돼요\n- 프로필에 장치의 원래 이름도 함께 저장해요"
+  "md5": "5E2E212BBF1CBA7F703865DF5A33F7ED",
+  "notes": "- 단축키 칸을 누르고 키 조합을 누르면 바로 입력돼요(팝업, 메인 창 모두)\n- Backspace, Delete, Esc로 단축키를 지울 수 있어요"
 }
