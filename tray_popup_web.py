@@ -355,8 +355,9 @@ def _build_profile_form_html(app, edit_index: int | None = None) -> str:
         <select id="add-recording" class="select-input">{recording_options}</select>
       </div>
       <div class="field">
-        <div class="field-label">단축키 (예: ctrl+alt+1, 비워두면 없음)</div>
-        <input type="text" id="add-hotkey" class="text-input" value="{hotkey_value}">
+        <div class="field-label">단축키 (칸을 누르고 키 조합 입력, Backspace/Esc로 지우기)</div>
+        <input type="text" id="add-hotkey" class="text-input" value="{hotkey_value}" readonly
+               placeholder="예: ctrl+alt+1" onkeydown="hswCaptureHotkey(event)">
       </div>
       <div class="save-row">
         <button class="save-btn" onclick="hswSaveProfile()">저장</button>
@@ -551,6 +552,39 @@ def _build_html(app) -> str:
       pywebview.api.get_main_view().then(function(html) {{
         document.getElementById('root').innerHTML = html;
       }});
+    }}
+
+    // 단축키 칸: 누른 키 조합을 keyboard 라이브러리가 읽는 "ctrl+alt+1" 형태로 채운다
+    var HSW_KEY_NAMES = {{
+      ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Space: 'space',
+      Enter: 'enter', Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+      Semicolon: ';', Quote: "'", Period: '.', Slash: '/', Backslash: '\\\\',
+      Insert: 'insert', Home: 'home', End: 'end', PageUp: 'page up', PageDown: 'page down'
+    }};
+
+    function hswKeyName(code) {{
+      if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+      if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+      if (/^F[0-9]{{1,2}}$/.test(code)) return code.toLowerCase();
+      return HSW_KEY_NAMES[code] || null;
+    }}
+
+    function hswCaptureHotkey(e) {{
+      if (e.key === 'Tab') return;
+      e.preventDefault();
+      if ((e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Escape') && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {{
+        e.target.value = '';
+        return;
+      }}
+      var key = hswKeyName(e.code);
+      if (!key) return;
+      var parts = [];
+      if (e.ctrlKey) parts.push('ctrl');
+      if (e.altKey) parts.push('alt');
+      if (e.shiftKey) parts.push('shift');
+      if (e.metaKey) parts.push('windows');
+      parts.push(key);
+      e.target.value = parts.join('+');
     }}
 
     function hswFormValues() {{

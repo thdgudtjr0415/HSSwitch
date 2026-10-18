@@ -613,11 +613,13 @@ class HSSwitchApp:
         elif self.recording_devices:
             recording_combo.current(0)
 
-        ttk.Label(editor, text="단축키 (예: ctrl+alt+1, 비워두면 없음)").pack(
+        ttk.Label(editor, text="단축키 (칸을 누르고 키 조합 입력, Backspace/Esc로 지우기)").pack(
             anchor="w", padx=12, pady=(12, 0)
         )
         hotkey_var = tk.StringVar(value=existing.get("hotkey", "") or "")
-        ttk.Entry(editor, textvariable=hotkey_var).pack(fill="x", padx=12)
+        hotkey_entry = ttk.Entry(editor, textvariable=hotkey_var)
+        hotkey_entry.pack(fill="x", padx=12)
+        hotkey_entry.bind("<KeyPress>", lambda e: self._capture_hotkey(e, hotkey_var))
 
         def on_save():
             name = name_var.get().strip()
@@ -682,6 +684,34 @@ class HSSwitchApp:
         except Exception:
             return "단축키 형식이 올바르지 않아요. 예: ctrl+alt+1"
         return None
+
+    # Windows 가상 키 코드 -> keyboard 라이브러리가 읽는 키 이름 (숫자/영문/F키는 코드 범위로 처리)
+    _HOTKEY_KEY_NAMES = {
+        37: "left", 38: "up", 39: "right", 40: "down", 32: "space", 13: "enter",
+        45: "insert", 36: "home", 35: "end", 33: "page up", 34: "page down",
+        192: "`", 189: "-", 187: "=", 219: "[", 221: "]", 186: ";", 222: "'", 190: ".", 191: "/", 220: "\\",
+    }
+
+    @classmethod
+    def _capture_hotkey(cls, event, hotkey_var: tk.StringVar):
+        """단축키 칸에서 누른 키 조합을 "ctrl+alt+1" 형태로 채운다. Backspace/Delete/Esc만 누르면 비운다."""
+        if event.keysym in ("Tab", "ISO_Left_Tab"):
+            return None  # 칸 이동은 그대로 둔다
+        ctrl, alt, shift = bool(event.state & 0x4), bool(event.state & 0x20000), bool(event.state & 0x1)
+        if event.keysym in ("BackSpace", "Delete", "Escape") and not (ctrl or alt or shift):
+            hotkey_var.set("")
+            return "break"
+        code = event.keycode
+        if 0x30 <= code <= 0x39 or 0x41 <= code <= 0x5A:
+            key = chr(code).lower()
+        elif 0x70 <= code <= 0x87:
+            key = f"f{code - 0x6F}"
+        else:
+            key = cls._HOTKEY_KEY_NAMES.get(code)
+        if key:  # Ctrl/Alt 같은 조합키만 눌렀을 때는 아직 완성된 조합이 아니라 무시한다
+            parts = [name for name, pressed in (("ctrl", ctrl), ("alt", alt), ("shift", shift)) if pressed]
+            hotkey_var.set("+".join(parts + [key]))
+        return "break"
 
     def _register_hotkeys(self):
         try:
