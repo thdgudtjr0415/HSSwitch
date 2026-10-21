@@ -36,6 +36,7 @@ HSSwitch는 스피커/헤드셋/마이크 같은 Windows 오디오 장치를 클
 | `theme_manager.py` | 시스템/라이트/다크 테마 해석과 팔레트 제공 (트레이 팝업에만 적용) |
 | `icon_art.py` | 트레이 아이콘 이미지를 PIL로 직접 그림 (헤드셋+마이크, 헤드셋, 스피커, 마이크) |
 | `icon_store.py` | 프로필에 지정한 내 이미지를 64x64 PNG로 `%APPDATA%\HSSwitch\icons`에 저장/불러오기/삭제. 클립보드 이미지 읽기 |
+| `crash_log.py` | 갑자기 꺼졌을 때 원인을 찾기 위한 `%APPDATA%\HSSwitch\hsswitch.log` 기록. 처리 안 된 오류의 traceback과 치명적 충돌(faulthandler) 스택을 남기고, 시작/정상 종료 줄로 비정상 종료를 구분 |
 | `config_manager.py` | config.json 읽기/쓰기. 프로필, 별칭, 테마, `auto_update_check`, 마지막으로 적용한 프로필(`last_profile`), "사용 중" 프로필 판별 |
 | `startup_manager.py` | 레지스트리 Run 키로 Windows 부팅 시 자동 실행 등록/해제 (`--startup` 인자로 실행) |
 | `updater.py` | 업데이트 확인, 다운로드, md5 검증, 배치 스크립트 생성/실행 |

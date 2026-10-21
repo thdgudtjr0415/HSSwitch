@@ -23,6 +23,7 @@ from PIL import ImageTk
 
 import audio_devices
 import config_manager
+import crash_log
 import icon_art
 import icon_store
 import startup_manager
@@ -814,6 +815,7 @@ class HSSwitchApp:
         self.root.lift()
 
     def quit_app(self):
+        crash_log.log("종료 요청: 트레이 메뉴 또는 종료 동작")
         try:
             keyboard.unhook_all_hotkeys()
         except AttributeError:
@@ -827,6 +829,7 @@ class HSSwitchApp:
 def main():
     if not _ensure_single_instance():
         return
+    crash_log.setup(APP_VERSION)
 
     ready = threading.Event()
     holder = {}
@@ -838,6 +841,7 @@ def main():
         try:
             comtypes.CoInitialize()
             root = tk.Tk()
+            root.report_callback_exception = lambda t, v, tb: crash_log.log_exception(t, v, tb, "tkinter 콜백")
             app = HSSwitchApp(root)
             if "--startup" in sys.argv:
                 app.hide_to_tray()
